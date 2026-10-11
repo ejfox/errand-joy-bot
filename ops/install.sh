@@ -5,7 +5,10 @@
 #   ops/install.sh                           checks → data dir → deno cache/check/test → unit
 #   ops/install.sh --start                   ...then (re)start the service and hit /health
 #   ops/install.sh --allow-net api.vendor.example,other.example
-#                                            extra hosts for --allow-net (live vendor APIs)
+#                                            extra hosts for --allow-net. The API hosts of the
+#                                            vendors enabled in config.toml are added on their own
+#                                            (VENDOR_HOSTS in gate/adapters/registry.ts); pass only
+#                                            custom *_BASE_URL hosts or upload hosts here.
 #   ops/install.sh --user NAME               service user (default: you; required as root)
 #   ops/install.sh --skip-tests              skip `deno test` (not recommended)
 #
@@ -33,7 +36,7 @@ while [[ $# -gt 0 ]]; do
     --skip-tests) SKIP_TESTS=1 ;;
     --allow-net) [[ $# -ge 2 ]] || { echo "--allow-net needs a value" >&2; exit 2; }; EXTRA_NET="$2"; shift ;;
     --user) [[ $# -ge 2 ]] || { echo "--user needs a value" >&2; exit 2; }; SVC_USER="$2"; shift ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
@@ -142,10 +145,24 @@ for kv in "${NET_URLS[@]}"; do
   [[ "$h" =~ ^[A-Za-z0-9.:_-]+$|^\[[0-9a-fA-F:]+\](:[0-9]+)?$ ]] || die "$k does not look like an http(s) URL"
   ALLOW_NET="$ALLOW_NET,$h"
 done
+# Vendor API hosts, derived from `vendors` in config.toml (the example on a first install, which
+# step 2 copies into place). An unreadable or invalid config stops the install.
+VENDOR_CONFIG="$CONFIG_PATH"
+[[ -f "$VENDOR_CONFIG" ]] || VENDOR_CONFIG="$INSTALL_DIR/examples/config.example.toml"
+VENDOR_NET="$(cd "$INSTALL_DIR" && NO_COLOR=1 \
+  "$DENO" run --quiet --no-prompt --allow-read="$VENDOR_CONFIG" gate/vendor_hosts.ts "$VENDOR_CONFIG")" \
+  || die "could not read the vendor list from $VENDOR_CONFIG (see the error above)"
+if [[ -n "$VENDOR_NET" ]]; then
+  [[ "$VENDOR_NET" =~ ^[A-Za-z0-9.:_,-]+$ ]] || die "vendor hosts look wrong: $VENDOR_NET"
+  echo "vendor hosts: $VENDOR_NET"
+  ALLOW_NET="$ALLOW_NET,$VENDOR_NET"
+fi
 if [[ -n "$EXTRA_NET" ]]; then
   [[ "$EXTRA_NET" =~ ^[A-Za-z0-9.:_,-]+$ ]] || die "--allow-net takes host[:port],host[:port]"
   ALLOW_NET="$ALLOW_NET,$EXTRA_NET"
 fi
+# Dedupe (a vendor host also passed by hand stays once), keeping the order.
+ALLOW_NET="$(printf '%s' "$ALLOW_NET" | tr ',' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -)"
 
 ALLOW_READ="$INSTALL_DIR,$DATA_DIR,$CONFIG_PATH"
 READ_WRITE_PATHS="$DATA_DIR $INSTALL_DIR/.deno-cache"
@@ -221,7 +238,7 @@ step "3. deno cache / check / test"
     # Tests never touch the network beyond loopback, never DM, never spend.
     env -u GATE_AGENT_TOKEN -u GATE_ADMIN_TOKEN DRY_RUN=1 DATA_DIR="$tmpdata" \
       "$DENO" test --allow-read --allow-write=/tmp --allow-env --allow-net=127.0.0.1 \
-      --unstable-kv gate relay # same flags as `deno task test`; relay tests also run on Deno KV
+      --unstable-kv gate relay tools # same flags as `deno task test`; relay tests also run on Deno KV
     rm -rf "$tmpdata"
   fi
 )

@@ -76,8 +76,9 @@ without `--dry`. It backs up the remote source, rsyncs (never `.env`, `config.to
    (below) and tap the links. This is where you find out whether your DMs arrive.
    `printf '0\n' | ops/set-key.sh DRY_RUN && sudo systemctl restart errand-joy-bot`
 3. **A real vendor.** Add an adapter and its key ([vendors.md](vendors.md)), put it in
-   `vendors`, re-run `ops/install.sh --allow-net <vendor-api-host> --start`, and send one
-   small auto-tier test.
+   `vendors`, re-run `ops/install.sh --start` (it adds the vendor's API hosts to `--allow-net`
+   from `VENDOR_HOSTS`; pass `--allow-net <host>` only for a custom base URL or upload host),
+   and send one small auto-tier test.
 
 ### A test request
 
@@ -119,7 +120,9 @@ Use the lightest level that works. Each includes the ones above it.
    `sudo systemctl stop errand-joy-bot`.
 
 STOP trips automatically on a velocity burst, an idempotency-key conflict, a nightly
-reconcile mismatch (a vendor charge with no ledger row), or 24h of the DM path being down.
+reconcile mismatch (a vendor charge with no ledger row, a second charge on one order, or a
+charge above the order's hard cap), or 24h of the DM path being down. A charge at or under the
+hard cap is not a mismatch: the request's final amount follows it (event `reconcile_final`).
 
 ### Health alerts (optional)
 

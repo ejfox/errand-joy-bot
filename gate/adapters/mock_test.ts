@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import type { PurchaseRequest, VendorAdapter } from "../types.ts";
 import { MockAdapter } from "./mock.ts";
-import { buildRegistry, GuardRefused, guarded, knownVendors } from "./registry.ts";
+import { buildRegistry, GuardRefused, guarded, knownVendors, VENDOR_HOSTS, vendorHosts } from "./registry.ts";
 
 function req(over: Partial<PurchaseRequest> = {}): PurchaseRequest {
   return {
@@ -96,6 +96,16 @@ Deno.test("status advances and listCharges includes orders plus phantoms", async
 });
 
 const OPEN = { isStopped: () => false, dryRun: false };
+
+Deno.test("VENDOR_HOSTS covers exactly the registered vendors; vendorHosts dedupes and refuses unknowns", () => {
+  assert.deepEqual(Object.keys(VENDOR_HOSTS).sort(), knownVendors().sort());
+  for (const hosts of Object.values(VENDOR_HOSTS)) {
+    for (const h of hosts) assert.match(h, /^[a-z0-9.-]+$/); // install.sh's --allow-net host check
+  }
+  assert.deepEqual(vendorHosts(["mock", "zinc", "lulu", "zinc"]), ["api.zinc.com", "api.lulu.com", "api.sandbox.lulu.com"]);
+  assert.deepEqual(vendorHosts(["mock"]), []);
+  assert.throws(() => vendorHosts(["nope"]), /unknown vendor/);
+});
 
 Deno.test("registry is a closed allowlist and hands out only guarded adapters", () => {
   assert.deepEqual(knownVendors(), [

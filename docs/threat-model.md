@@ -117,7 +117,9 @@ The gate host's `.env` leaks, or the vendor is breached.
   use), prepaid wallets stay small with auto-reload off, card billing uses a
   single-merchant virtual card with a limit.
 - **Nightly reconcile** pulls the vendor's charge list and trips STOP on any charge with
-  no ledger row, so out-of-band spending is noticed within a day.
+  no ledger row, a second charge on one order, or a charge above the order's stored hard cap,
+  so out-of-band spending is noticed within a day. A charge at or under the cap (real tax, a
+  refunded hold) only updates the ledger's final amount.
 - Fix: disable the key on the vendor dashboard, pause the card, rotate (runbook).
 
 ### 6. Notifier compromise or outage

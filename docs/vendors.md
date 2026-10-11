@@ -14,6 +14,50 @@ Shipped today: `zinc` (see [Zinc](#zinc-retail-amazon-walmart-target-mcmaster-ca
 `mock`, a deterministic fake vendor that moves no money. Use the mock for the
 rehearsal stage in [runbook.md](runbook.md).
 
+## All vendors at a glance
+
+| Vendor (`id`) | What | Reach | Payment | Vendor-side cap (holds if the gate host is compromised) | Env vars | Key name |
+|---|---|---|---|---|---|---|
+| Zinc (`zinc`) | Amazon and other retailers | `self` to owner-home, else `others` | prepaid Zinc wallet | per-order `max_price` + a small wallet, auto top-up OFF | `ZINC_API_KEY`, `OWNER_SHIP_TO_JSON`; opt. `ZINC_RETAILER`, `ZINC_TAX_RATE`, `ZINC_BASE_URL` | `zinc-<host>-<yyyy-mm>` |
+| Tree-Nation (`treenation`) | trees planted | `world` | prepaid planting credit | the credit balance (no top-up from the gate) | `TREENATION_API_KEY`, `TREENATION_BASE_URL` (test host by default); opt. `TREENATION_EUR_USD_RATE` | `treenation-<host>-<yyyy-mm>` |
+| SkyFi (`skyfi`) | archive satellite imagery | `world` | card on the SkyFi account | the SkyFi budget (`budgetAmount`) | `SKYFI_API_KEY`; opt. `SKYFI_BASE_URL` | `skyfi-<host>-<yyyy-mm>` |
+| Stannp (`stannp`) | US postcards and letters | `self` to owner-home, else `others` (always asks) | prepaid balance | the balance, auto top-up OFF; re-quote before the live call | `STANNP_API_KEY`, `OWNER_SHIP_TO_JSON`; opt. `STANNP_BASE_URL` | `stannp-<host>-<yyyy-mm>` |
+| Lulu (`lulu`) | printed zines and books | `self` to owner-home, else `others` | card on file, charged at production | Privacy merchant-locked card, monthly limit; cancel window before production | `LULU_CLIENT_KEY`, `LULU_CLIENT_SECRET`, `LULU_CONTACT_EMAIL`, `LULU_ENV` (sandbox default), `OWNER_SHIP_TO_JSON`; opt. `LULU_SHIPPING_LEVEL`, `LULU_PRODUCTION_DELAY_MINUTES` | `lulu-<host>-<yyyy-mm>` |
+| Slant 3D (`slant3d`) | 3D prints (FDM) | `self` to owner-home, else `others` | card on the Slant account | Privacy merchant-locked card; the draft total is re-read before processing | `SLANT3D_API_KEY`, `SLANT3D_PLATFORM_ID`, `SLANT3D_CUSTOMER_EMAIL`, `OWNER_SHIP_TO_JSON`; opt. `SLANT3D_BASE_URL` | `slant3d-<host>-<yyyy-mm>` |
+| Prodigi (`prodigi`) | art prints, posters, puzzles | `self` to owner-home, else `others` | card on file | Privacy merchant-locked card, monthly limit | `PRODIGI_API_KEY`, `PRODIGI_ENV` (sandbox default), `OWNER_SHIP_TO_JSON`; opt. `PRODIGI_SHIPPING_METHOD`, `PRODIGI_TAX_RATE` | `prodigi-<host>-<yyyy-mm>` |
+| Mouser (`mouser`) | electronics, Adafruit parts | `self` to owner-home, else `others` | saved card | Privacy merchant-locked card, monthly limit; dry-run total checked before submit | `MOUSER_SEARCH_API_KEY`, `MOUSER_ORDER_API_KEY`, `MOUSER_CARD_LAST4`, `OWNER_SHIP_TO_JSON`; opt. `MOUSER_SHIPPING_CODE`, `MOUSER_TAX_RATE`, `MOUSER_SHIPPING_ESTIMATE_CENTS` | `mouser-<host>-<yyyy-mm>` |
+| mock (`mock`) | rehearsal | per request | none | none (moves no money) | none | none |
+
+The gate-side caps (tiers, day / month / per-vendor windows, the per-order hard cap) apply to all
+of them. Every variable is listed, commented, in `.env.example`. `ops/install.sh` adds each enabled
+vendor's API hosts to Deno's `--allow-net` itself (`VENDOR_HOSTS` in `gate/adapters/registry.ts`).
+
+**Item fields beyond `sku` / `qty` / `title` / `url`** (bounded at intake):
+
+| Field | Used by | Limit |
+|---|---|---|
+| `message` | Stannp: the postcard's printed back message. Unsealed DMs show it as `printed message:` | ≤ 500 chars |
+| `files: {interior, cover}` | Lulu: interior and cover PDFs | https, ≤ 2000 chars each |
+| `pageCount` | Lulu: interior pages | 1-1200 (Lulu: 2-1200) |
+| `sizing` | Prodigi: `fillPrintArea` (default), `fitPrintArea`, `stretchToPrintArea` | letters, ≤ 40 |
+| `attributes` | Prodigi: product attributes, e.g. `{"color": "black"}` | ≤ 20 keys, values ≤ 80 chars |
+| `aoi` | SkyFi: area of interest on the `archive:` item, a WKT polygon | ≤ 10,000 chars |
+
+**What the gate reads back from an adapter** (`Order.raw` from `place()`, `status().raw`):
+`links: string[]` (certificates, downloads, tracking pages) are kept if https, without userinfo,
+and without a credential query parameter (`apiKey`, `key`, `token`, ...; such a link is dropped,
+never "fixed"). They are stored on the request and the delivery why-note DM shows up to 3, wrapped
+in `<>`. `blocked: string` means the order exists but waits on the owner at the vendor (Prodigi
+`RequiresPaymentAuthorisation`): the request stays `placed`, gets `needs_action`, and the owner
+gets ONE DM per request, `<vendor label> order needs you: <dashboard hint>`.
+
+**Reconcile and the hard cap.** At placing the gate stores the order's hard cap (the bound quote,
+never above the agent's `maxTotalCents`). Reconcile trips STOP for a charge with no order, a second
+charge against one order, or a charge **above** the hard cap. A charge at or under the cap is the
+real amount (a refunded Zinc hold, real tax): the request's final amount is set to it, the windows
+count it, and an event `reconcile_final:<from>-><to>` is logged. Rows placed before the hard cap was
+stored use `maxTotalCents` as their cap.
+
 ## The adapter interface
 
 Every adapter implements `VendorAdapter` from `gate/types.ts`:
@@ -27,7 +71,7 @@ Every adapter implements `VendorAdapter` from `gate/types.ts`:
 | `place(req, quote, hardCapCents, idempotencyKey)` | place the order; refuse if the vendor's final total would exceed `hardCapCents`; pass the idempotency key to the vendor if it supports one |
 | `status(id)` | `open`, `shipped`, `delivered` or `cancelled`, plus tracking |
 | `cancel(id)` | best-effort cancel |
-| `listCharges(sinceISO)` | every charge the vendor made, for the nightly reconcile. A charge with no ledger row trips STOP |
+| `listCharges(sinceISO)` | every charge the vendor made, for the nightly reconcile. A charge with no ledger row, or above the order's hard cap, trips STOP |
 | `pause()` | the kill-switch instrument: pause the card, disable the key, or no-op if the vendor offers nothing |
 
 ## guarded(): what you get for free
@@ -56,10 +100,13 @@ validate its own inputs and never log keys or full addresses.
    a default.
 3. **Tests**: `gate/adapters/<vendor>_test.ts`, run with `DRY_RUN=1` and a fake `fetch`.
    Tests never touch the network.
-4. **Register it** in `gate/adapters/registry.ts` (it gets `guarded()` there).
+4. **Register it** in `gate/adapters/registry.ts` (it gets `guarded()` there): a factory in
+   `VENDOR_FACTORIES`, its API hosts in `VENDOR_HOSTS`, a label in `VENDOR_LABELS` and (if it
+   can report `raw.blocked`) a hint in `VENDOR_ACTION_HINTS` (`gate/notify.ts`).
 5. **Add it to `vendors`** in your `config.toml`.
-6. **Allow its API host**: `ops/install.sh --allow-net api.vendor.example --start`. The gate
-   runs with a Deno `--allow-net` allowlist, so an unlisted host is unreachable.
+6. **Re-run `ops/install.sh --start`**: it adds the vendor's `VENDOR_HOSTS` to the gate's Deno
+   `--allow-net` allowlist (an unlisted host is unreachable). A custom base URL or upload host
+   goes in by hand: `ops/install.sh --allow-net host.example --start`.
 7. **Create the key** (below), paste it with `ops/set-key.sh VENDOR_API_KEY`, restart.
 8. **One small auto-tier test** with your own address, and watch the DM, the veto window
    and `bin/buy reconcile`.
@@ -111,7 +158,7 @@ Paid from a prepaid Zinc wallet; no card on the request.
 | `ZINC_TAX_RATE` | optional tax buffer on the quote, default `0.10` (offers carry no tax) |
 | `OWNER_SHIP_TO_JSON` | the owner's address in Zinc's shape: `{"first_name","last_name","address_line1","address_line2","city","state","postal_code","phone_number","country":"US"}`. Private. `place()` refuses if it is missing or any required field is empty, the ZIP isn't 5 or 9 digits, or `state` isn't a 2-letter code. Env files can't hold spaces or quotes, so store it base64-encoded: `printf '%s' '{"first_name":…}' \| base64 \| ops/set-key.sh OWNER_SHIP_TO_JSON` (raw JSON is accepted too) |
 
-Allow the host: `ops/install.sh --allow-net api.zinc.com`.
+Hosts: `api.zinc.com` (added to `--allow-net` by `ops/install.sh` when `zinc` is enabled).
 
 **How it maps:**
 
@@ -177,7 +224,7 @@ Plants trees from the account's prepaid planting credit. Reach `world`; the requ
 | `TREENATION_BASE_URL` | optional, **default `https://youcannevertestenough.tree-nation.com` (the test host)**. Set `https://tree-nation.com` to plant for real |
 | `TREENATION_EUR_USD_RATE` | optional, default `1.25`: USD per EUR for quotes (prices are EUR; `Quote` is USD). Deliberately high, so the ledger over-counts |
 
-Allow the hosts: `ops/install.sh --allow-net tree-nation.com,youcannevertestenough.tree-nation.com`.
+Hosts: `tree-nation.com`, `youcannevertestenough.tree-nation.com` (added by `ops/install.sh`).
 
 **Items:** exactly one item, `qty` = number of trees (1-1000):
 `species:<id>` (a species id from `GET /api/species`) or `project:<id>` (the cheapest
@@ -242,15 +289,17 @@ refused**: the adapter never calls the tasking endpoints, and a `tasking:` sku i
 | `SKYFI_API_KEY` | sent as the `X-Skyfi-Api-Key` header. There is no sandbox host |
 | `SKYFI_BASE_URL` | optional, default `https://app.skyfi.com/platform-api` (https only) |
 
-Allow the host: `ops/install.sh --allow-net app.skyfi.com`.
+Hosts: `app.skyfi.com` (added by `ops/install.sh`).
 
-**Items** (skus are capped at 128 chars and `Item` has no geometry field, so the area travels in a sku):
+**Items:**
 
-- exactly one `archive:<archiveId>` (from a catalog search: `POST /archives` or the SkyFi MCP), qty 1;
-- plus at most one area item, qty 1: `point:<lat>,<lon>,<radiusKm>` (a square of side 2 × radius,
-  radius up to 25 km), `bbox:<minLon>,<minLat>,<maxLon>,<maxLat>` (up to 2° a side), or
-  `aoi:POLYGON((lon lat, …))` (a simple closed WKT ring; only coarse ones fit in 128 chars);
-- no area item → the archive's whole footprint (`GET /archives/{id}`), priced like any other.
+- exactly one `archive:<archiveId>` (from a catalog search: `POST /archives` or the SkyFi MCP), qty 1.
+  Its `aoi` field is the area: `POLYGON((lon lat, …))`, a simple closed WKT ring (≤ 10k chars,
+  ≤ 500 vertices);
+- or, instead of `aoi`, at most one shorthand area item, qty 1: `point:<lat>,<lon>,<radiusKm>` (a
+  square of side 2 × radius, radius up to 25 km) or `bbox:<minLon>,<minLat>,<maxLon>,<maxLat>` (up
+  to 2° a side);
+- no area → the archive's whole footprint (`GET /archives/{id}`), priced like any other.
 
 **How it maps:**
 
@@ -305,14 +354,17 @@ the request. US 4x6 postcard ≈ $0.80, 6x9 ≈ $0.99, letter ≈ $0.94, postage
 | `STANNP_BASE_URL` | optional, default `https://api-us1.stannp.com` (https only). EU accounts use `api-eu1`, which this adapter isn't tested against |
 | `OWNER_SHIP_TO_JSON` | the owner's address, same var and Zinc shape as above. Postcards "to me" go here |
 
-Allow the host: `ops/install.sh --allow-net api-us1.stannp.com`.
+Hosts: `api-us1.stannp.com` (added by `ops/install.sh`).
 
 **What an agent sends.** One item, `qty: 1` (one request = one mailpiece):
 
-| `sku` | `url` | `title` |
+| `sku` | `url` | `message` |
 |---|---|---|
-| `postcard-4x6`, `postcard-6x9`, `postcard-6x11` | the front image, https JPG/PNG/PDF (e.g. a render) | the message printed on the back |
-| `letter` | the letter PDF (https, ≤ 25 pages) | unused |
+| `postcard-4x6`, `postcard-6x9`, `postcard-6x11` | the front image, https JPG/PNG/PDF (e.g. a render) | the message printed on the back (≤ 500 chars) |
+| `letter` | the letter PDF (https, ≤ 25 pages) | not allowed (refused: a letter prints only its PDF) |
+
+`title` is a label for the DMs and is never printed. Every unsealed DM shows the message as
+`printed message: "…"`.
 
 `shipTo` = the owner-home label (reach `self`) or `{name, line1, city, state, zip}` (reach
 `others`: always an ask, never silent or sealed, so the DM shows the recipient, the message and
@@ -376,15 +428,15 @@ to an address it can't verify.
 | `LULU_PRODUCTION_DELAY_MINUTES` | optional, 60-2880, default 60: Lulu's own cancel window before the card is charged |
 | `OWNER_SHIP_TO_JSON` | the owner's address (Zinc shape). Lulu limits: name ≤ 35, street/city ≤ 30 chars; longer refuses |
 
-Allow the host: `ops/install.sh --allow-net api.sandbox.lulu.com` (and `api.lulu.com` for production).
+Hosts: `api.sandbox.lulu.com`, `api.lulu.com` (both added by `ops/install.sh`).
 
 **What an agent sends.** Up to 10 items (one per title), `qty` = copies (1-100):
 
-- `sku` = `<pod_package_id>/<page_count>`, e.g. `0550X0850.FC.STD.SS.080CW444.GXX/16` (dotted or
-  legacy 27-char pod package ids; pick one with Lulu's price calculator).
-- `url` = the interior PDF with the cover PDF in the fragment:
-  `https://files.example/zine-42/interior.pdf#cover=https://files.example/zine-42/cover.pdf`
-  (the cover may be percent-encoded). Both must be public https URLs Lulu can download.
+- `sku` = the pod package id, e.g. `0550X0850.FC.STD.SS.080CW444.GXX` (dotted or legacy 27-char
+  ids; pick one with Lulu's price calculator).
+- `pageCount` = interior pages (2-1200).
+- `files.interior` and `files.cover` = the interior and cover PDFs, public https URLs Lulu can
+  download.
 - `title` = the line-item title (printed on Lulu's records; default "Untitled").
 - A third-party `shipTo` must include `phone` (Lulu requires one; otherwise it would use yours).
 
@@ -456,7 +508,8 @@ prepaid wallet, no `max_price` and no idempotency key, so the adapter enforces t
 | `SLANT3D_BASE_URL` | optional, default `https://slant3dapi.com/v2/api` (https only) |
 | `OWNER_SHIP_TO_JSON` | shared with Zinc (same shape, see above); converted to Slant's `Address` |
 
-Allow the hosts: `ops/install.sh --allow-net slant3dapi.com,<upload host>`. Uploads go to a
+Hosts: `slant3dapi.com` is added by `ops/install.sh`; the upload host is NOT (it isn't documented
+and hasn't been observed live yet): `ops/install.sh --allow-net <upload host>`. Uploads go to a
 presigned S3 URL that Slant hands out, not to slant3dapi.com. The live test prints the request
 that fails if the host is missing; add that S3 hostname. If agents give https design URLs,
 their hosts need allowing too.
@@ -547,15 +600,13 @@ no order number, which the gate records as `outcome_unknown` (STOP until you res
 | `PRODIGI_TAX_RATE` | optional US sales-tax buffer, default `0.10`, applied when a US quote carries no tax |
 | `OWNER_SHIP_TO_JSON` | the same owner address as Zinc (see below). Required: it is the recipient |
 
-Allow the hosts: `ops/install.sh --allow-net api.sandbox.prodigi.com,api.prodigi.com`.
+Hosts: `api.sandbox.prodigi.com`, `api.prodigi.com` (both added by `ops/install.sh`).
 
 **Items**: `sku` = a Prodigi product SKU from their catalogue (e.g. a giclée fine-art print
 `GLOBAL-FAP-12X16`); `url` = the **https** image asset Prodigi downloads and prints (required:
-`quote()` already refuses an item without one); `qty` = copies. Sizing defaults to
-`fillPrintArea` and attributes to none. The adapter reads `sizing` and `attributes` off the item,
-but `Item` has no such fields yet and gate intake drops unknown item keys, so through the gate
-today only the defaults apply. Products with a required attribute (e.g. a frame colour) need that
-types change first.
+`quote()` already refuses an item without one); `qty` = copies; `sizing` = `fillPrintArea`
+(default), `fitPrintArea` or `stretchToPrintArea`; `attributes` = the product's attributes, e.g.
+`{"color": "black"}` for a framed print (default none).
 
 **How it maps:**
 
@@ -576,8 +627,9 @@ types change first.
   the Privacy cap. The adapter treats it as **placed but blocked**: it returns the order (so the
   ledger counts it), logs one line naming the order id and amount, and **never re-posts it**.
   `status()` keeps reporting `open` with `raw.blocked` until you authorise or cancel it in the
-  Prodigi dashboard. The gate doesn't DM about it yet (see "known gaps" below), so check the gate
-  log after a Prodigi order.
+  Prodigi dashboard. The gate marks the request `needs_action` and DMs you once:
+  `art print (Prodigi) order needs you: authorise the card payment in the Prodigi dashboard …`.
+  The `authorisationUrl` itself is never DMed.
 - `status()`: `GET /v4.0/orders/{id}`. Stage `Cancelled` → `cancelled`; `Complete` ("all
   shipments sent") → `delivered`, because Prodigi has no door-delivery signal; a shipment
   `Shipped` → `shipped`; otherwise `open` (an order inside a pause window has no status yet).
@@ -585,11 +637,10 @@ types change first.
   `actionNotAvailable` → false. Only possible before the order is in fulfilment.
 - `listCharges()`: `GET /v4.0/orders?createdFrom=…&top=100&skip=…`; one charge per order = the net
   of its `charges[].totalCost` (refunds are negative). Orders with no charges yet are skipped.
-  **Expect STOP after the first US order.** The ledger records the quote, which includes the 10%
-  tax buffer whenever Prodigi quotes no US tax; Prodigi's real charge will almost never equal it
-  to the cent. So the first reconcile after each US Prodigi order will report `amount_mismatch`
-  and trip STOP until you've seen what Prodigi actually charges for tax, then set
-  `PRODIGI_TAX_RATE` to match (or `0`) and resolve.
+  The ledger records the quote, which includes the 10% tax buffer whenever Prodigi quotes no US
+  tax, and that quote is the order's hard cap. Prodigi's real charge (with real tax) at or under
+  it just updates the request's final amount; a charge above it trips STOP. If real tax ever runs
+  past the buffer, raise `PRODIGI_TAX_RATE`.
 - `pause()` is a local flag. **The real kill is pausing the Privacy `prodigi` card.**
 
 **Card:** Privacy `MERCHANT_LOCKED`, `MONTHLY` **$60**, saved as the only card in the Prodigi
@@ -619,7 +670,7 @@ Adafruit parts are listed as `485-<Adafruit PID>`; check one with search before 
 | `MOUSER_SHIPPING_ESTIMATE_CENTS` | optional shipping estimate on the quote, default `999` |
 | `OWNER_SHIP_TO_JSON` | the same owner address as Zinc, sent as the order's shipping address |
 
-Allow the host: `ops/install.sh --allow-net api.mouser.com`.
+Hosts: `api.mouser.com` (added by `ops/install.sh`).
 
 **The keys ride in the URL** (`?apiKey=`), so the adapter never puts a URL into an error, a log
 line or `raw`, and it swallows fetch's own error text (which contains the URL). `scrubUrl()` in
@@ -669,15 +720,14 @@ so it cannot reach the cart or order endpoints.
 `MOUSER_LIVE=1 deno test --allow-read --allow-env --allow-net=api.mouser.com --filter LIVE gate/adapters/mouser_test.ts`
 with `MOUSER_SEARCH_API_KEY` in the environment (optional `MOUSER_LIVE_PART`, default `485-4116`).
 
-## Known gaps (card-paid vendors)
+## Known gaps
 
-- `Item` has no `sizing` / `attributes`, and intake strips unknown item keys, so Prodigi
-  products that need an attribute can't be ordered through the gate yet.
-- Neither `Order.raw` nor `status().raw` reaches the owner, so a Prodigi order blocked on
-  `RequiresPaymentAuthorisation` is only in the gate log. It needs a "needs action" field on
-  `Order` / `status()` and a DM.
-- The sealed-DM vendor label falls back to the vendor id (`prodigi`, `mouser`); add entries to
-  `VENDOR_LABELS` in `gate/notify.ts` for nicer wording.
+- A robot-fund (`fund_auto`) order's `spend` entry is the amount at placing. When reconcile later
+  moves the final amount (real tax, a refunded hold), the fund entry is not corrected yet.
+- Slant 3D's upload host (a presigned S3 URL) isn't in `VENDOR_HOSTS`; add it with
+  `ops/install.sh --allow-net` once seen.
+- Mouser has no cancel endpoint and Tree-Nation no charges list (reconcile is blind there; the
+  prepaid credit is the cap).
 
 ## Roadmap adapters
 

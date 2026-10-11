@@ -218,6 +218,23 @@ const itemSchema = z.object({
   title: z.string().max(300).optional().describe("Human-readable product name"),
   url: z.string().max(2000).optional().describe("Product page URL"),
   maxUnitCents: z.number().int().min(0).optional().describe("Refuse if the unit price is above this (cents)"),
+  message: z.string().min(1).max(500).optional().describe(
+    "Text the vendor PRINTS (stannp: the postcard's back message). The owner sees it in every unsealed DM.",
+  ),
+  files: z.object({
+    interior: z.string().max(2000).optional().describe("https URL of the interior PDF"),
+    cover: z.string().max(2000).optional().describe("https URL of the cover PDF"),
+  }).strict().optional().describe("Print files (lulu: interior + cover PDFs, both https)"),
+  pageCount: z.number().int().min(1).max(1200).optional().describe("Interior page count (lulu: 2-1200)"),
+  sizing: z.string().regex(/^[A-Za-z]{1,40}$/).optional().describe(
+    "prodigi: fillPrintArea (default) | fitPrintArea | stretchToPrintArea",
+  ),
+  attributes: z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,39}$/), z.string().max(80)).optional().describe(
+    'prodigi: product attributes, e.g. {"color": "black"} (max 20 keys)',
+  ),
+  aoi: z.string().min(1).max(10_000).optional().describe(
+    "skyfi: area of interest on the archive:<id> item, a WKT polygon 'POLYGON((lon lat, ...))'",
+  ),
 });
 
 const requestShape = {

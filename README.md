@@ -234,14 +234,23 @@ nightly reconcile), `pause` (kill switch), plus `maxReach` and `reachFor(req)`, 
 floor. Register it in `gate/adapters/registry.ts`, which wraps every adapter in
 **`guarded()`**: DRY_RUN, STOP, pause and the hard cap are enforced around your adapter,
 not by it, and effective reach is always max(declared, `reachFor`). Then list it in
-`vendors`, allow its API host (`ops/install.sh --allow-net api.vendor.example`), and
-create its key named `<app>-<host>-<yyyy-mm>` with a vendor-side cap.
+`vendors`, add its API hosts to `VENDOR_HOSTS` (`ops/install.sh` derives the gate's
+`--allow-net` from the enabled vendors), and create its key named `<app>-<host>-<yyyy-mm>`
+with a vendor-side cap.
 Full guide: [docs/vendors.md](docs/vendors.md).
 
 ## Roadmap
 
-◆ **Vendor adapters:** Zinc (retail), Mouser (electronics), Lob and Stannp (physical
-mail; always `others`), Tree-Nation (trees; `world`), SkyFi (satellite imagery; `world`).
+● **Vendor adapters shipped:** Zinc (retail), Mouser (electronics), Prodigi (art prints),
+Slant 3D (3D prints), Lulu (zines), Stannp (postcards; `others` unless to you), Tree-Nation
+(trees; `world`), SkyFi (archive satellite imagery; `world`). One table of all of them, with
+payment style, cap and env vars: [docs/vendors.md](docs/vendors.md#all-vendors-at-a-glance).
+● **Reconcile tolerates real vendors:** a charge only trips STOP above the order's stored hard cap;
+under it, the ledger takes the real amount (refunded holds, real tax).
+● **Delivery links and "needs you" DMs:** tree certificates, image downloads and tracking pages
+land in the delivery why-note; an order blocked at the vendor (a card authorisation) DMs once.
+◆ **Vendor adapters next:** Lob (letters), SkyFi tasking (new captures; out of scope today).
+◆ **Robot-fund corrections:** follow reconcile's final amount into the fund ledger.
 ◆ **Notifiers:** `discord-bot`, `telegram`, alongside the shipped `ntfy` and generic `http-dm`.
 ◇ Joy-budget taste learning from delivery ratings.
 ◇ A spend dashboard read from the ledger.

@@ -131,6 +131,36 @@ export function knownVendors(): string[] {
 }
 
 /**
+ * The API hosts each vendor's adapter talks to with its DEFAULT base URLs (live and sandbox both,
+ * so flipping LULU_ENV / PRODIGI_ENV / TREENATION_BASE_URL needs no reinstall). ops/install.sh
+ * adds these to Deno's --allow-net for the vendors enabled in config.toml (gate/vendor_hosts.ts).
+ * A custom *_BASE_URL host still goes in `install.sh --allow-net`.
+ */
+export const VENDOR_HOSTS: Readonly<Record<string, readonly string[]>> = {
+  mock: [],
+  zinc: ["api.zinc.com"],
+  treenation: ["tree-nation.com", "youcannevertestenough.tree-nation.com"],
+  skyfi: ["app.skyfi.com"],
+  stannp: ["api-us1.stannp.com"],
+  lulu: ["api.lulu.com", "api.sandbox.lulu.com"],
+  // File uploads go to a presigned S3 URL whose host Slant 3D picks (not documented, not yet
+  // observed live). Pass it with `install.sh --allow-net <bucket host>` once seen.
+  slant3d: ["slant3dapi.com"],
+  prodigi: ["api.prodigi.com", "api.sandbox.prodigi.com"],
+  mouser: ["api.mouser.com"],
+};
+
+/** Deduped --allow-net hosts for the enabled vendors. Unknown vendors throw (closed allowlist). */
+export function vendorHosts(enabled: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const v of enabled) {
+    if (!Object.hasOwn(VENDOR_HOSTS, v)) throw new Error(`unknown vendor "${v}"`);
+    for (const h of VENDOR_HOSTS[v]) if (!out.includes(h)) out.push(h);
+  }
+  return out;
+}
+
+/**
  * Build the guarded adapters for the enabled vendors (one instance each per process, so orders
  * placed through one show up in its listCharges). `overrides` substitutes an instance (tests);
  * it is guarded all the same. Unknown vendors throw.
