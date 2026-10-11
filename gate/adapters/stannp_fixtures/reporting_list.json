@@ -1,0 +1,83 @@
+{
+  "_source": "Shape of Stannp GET /v1/reporting/list/:startdate/:enddate (docs response example). All values are fake.",
+  "success": true,
+  "data": {
+    "singles": [
+      {
+        "id": "50000001",
+        "timestamp": "2026-10-11 15:00:00",
+        "status": "received",
+        "type": "postcard",
+        "format": "4x6",
+        "pdf_file": "https://files.example/test-postcard-50000001.pdf",
+        "dispatched": null,
+        "country": "US",
+        "cost": "0.80",
+        "addons": "",
+        "tags": "ejb-example-idem-1",
+        "postcode": "10001",
+        "address": "101 Example St, Exampleville NY 10001"
+      },
+      {
+        "id": "50000002",
+        "timestamp": "2026-10-11 16:00:00",
+        "status": "delivered",
+        "type": "letter",
+        "format": "US-LETTER",
+        "pdf_file": "https://files.example/test-letter-50000002.pdf",
+        "dispatched": "2026-10-11 20:00:00",
+        "country": "US",
+        "cost": "0.94",
+        "addons": "",
+        "tags": "",
+        "postcode": "10001",
+        "address": "101 Example St, Exampleville NY 10001"
+      },
+      {
+        "id": "50000003",
+        "timestamp": "2026-10-11 17:00:00",
+        "status": "cancelled",
+        "type": "postcard",
+        "format": "4x6",
+        "pdf_file": "https://files.example/test-postcard-50000003.pdf",
+        "dispatched": null,
+        "country": "US",
+        "cost": "0.00",
+        "addons": "",
+        "tags": "",
+        "postcode": "10001",
+        "address": "101 Example St, Exampleville NY 10001"
+      },
+      {
+        "id": "50000004",
+        "timestamp": "2026-10-10 23:59:00",
+        "status": "delivered",
+        "type": "postcard",
+        "format": "4x6",
+        "pdf_file": "https://files.example/test-postcard-50000004.pdf",
+        "dispatched": "2026-10-11 09:00:00",
+        "country": "US",
+        "cost": "0.80",
+        "addons": "",
+        "tags": "",
+        "postcode": "10001",
+        "address": "101 Example St, Exampleville NY 10001"
+      },
+      {
+        "id": "50000005",
+        "timestamp": "2026-10-11 18:00:00",
+        "status": "producing",
+        "type": "greetingcard",
+        "format": "A5",
+        "pdf_file": "https://files.example/test-greetingcard-50000005.pdf",
+        "dispatched": null,
+        "country": "US",
+        "cost": "1.50",
+        "addons": "",
+        "tags": "",
+        "postcode": "10001",
+        "address": "101 Example St, Exampleville NY 10001"
+      }
+    ]
+  }
+}

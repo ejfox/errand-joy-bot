@@ -1,0 +1,38 @@
+{
+  "_source": "Shape of Lulu POST /print-job-cost-calculations/ 201 (OpenAPI example), one 16-page saddle-stitched zine to a US address. All values are fake; the HANDLING_FEE entry is not in the total, as in the spec's own example.",
+  "shipping_address": {
+    "city": "Exampleville",
+    "country_code": "US",
+    "is_business": false,
+    "name": "Example Owner",
+    "phone_number": "5555550100",
+    "postcode": "10001",
+    "state_code": "NY",
+    "street1": "101 Example St",
+    "street2": ""
+  },
+  "currency": "USD",
+  "fees": [
+    { "currency": "USD", "fee_type": "HANDLING_FEE", "sku": "HANDLING_FEE", "tax_rate": "0.080000", "total_cost_excl_tax": "1.00", "total_cost_incl_tax": "1.08", "total_tax": "0.08" },
+    { "currency": "USD", "fee_type": "FULFILLMENT_FEE", "sku": "FULFILLMENT_FEE", "tax_rate": "0.080000", "total_cost_excl_tax": "0.75", "total_cost_incl_tax": "0.81", "total_tax": "0.06" }
+  ],
+  "fulfillment_cost": { "tax_rate": "0.08", "total_cost_excl_tax": "0.75", "total_cost_incl_tax": "0.81", "total_tax": "0.06" },
+  "line_item_costs": [
+    {
+      "cost_excl_discounts": "4.30",
+      "discounts": [],
+      "quantity": 1,
+      "tax_rate": "0.080000",
+      "total_cost_excl_discounts": "4.30",
+      "total_cost_excl_tax": "4.30",
+      "total_cost_incl_tax": "4.64",
+      "total_tax": "0.34",
+      "unit_tier_cost": null
+    }
+  ],
+  "shipping_cost": { "tax_rate": "0.08", "total_cost_excl_tax": "4.99", "total_cost_incl_tax": "5.39", "total_tax": "0.40" },
+  "total_cost_excl_tax": "10.04",
+  "total_cost_incl_tax": "10.84",
+  "total_discount_amount": "0.00",
+  "total_tax": "0.80"
+}

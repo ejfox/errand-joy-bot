@@ -1,0 +1,43 @@
+{
+  "_source": "Shape of Lulu GET /print-jobs/?exclude_line_items=true (OpenAPI {count,next,previous,results}). All values are fake.",
+  "count": 5,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 90001,
+      "external_id": "example-idem-1",
+      "date_created": "2026-10-11T15:00:00.000000Z",
+      "status": { "changed": "2026-10-11T15:01:00.000000Z", "message": "Print-job is paid and waiting", "name": "PRODUCTION_DELAYED" },
+      "costs": { "currency": "USD", "total_cost_excl_tax": "10.04", "total_cost_incl_tax": "10.84", "total_tax": "0.80" }
+    },
+    {
+      "id": 90002,
+      "external_id": "example-idem-2",
+      "date_created": "2026-10-11T16:00:00.000000Z",
+      "status": { "changed": "2026-10-11T16:05:00.000000Z", "message": "Print-job was canceled", "name": "CANCELED" },
+      "costs": { "currency": "USD", "total_cost_excl_tax": "10.04", "total_cost_incl_tax": "10.84", "total_tax": "0.80" }
+    },
+    {
+      "id": 90003,
+      "external_id": "example-idem-3",
+      "date_created": "2026-10-11T17:00:00.000000Z",
+      "status": { "changed": "2026-10-11T17:05:00.000000Z", "message": "Example: interior file has fewer than 2 pages", "name": "REJECTED" },
+      "costs": null
+    },
+    {
+      "id": 90004,
+      "external_id": "example-idem-4",
+      "date_created": "2026-10-11T18:00:00.000000Z",
+      "status": { "changed": "2026-10-11T18:00:00.000000Z", "message": "Print-job is currently being validated", "name": "CREATED" },
+      "costs": null
+    },
+    {
+      "id": 90005,
+      "external_id": null,
+      "date_created": "2026-10-11T19:00:00.000000Z",
+      "status": { "changed": "2026-10-14T10:00:00.000000Z", "message": "All line-items were shipped", "name": "SHIPPED" },
+      "costs": { "currency": "USD", "total_cost_excl_tax": "23.50", "total_cost_incl_tax": "25.10", "total_tax": "1.60" }
+    }
+  ]
+}

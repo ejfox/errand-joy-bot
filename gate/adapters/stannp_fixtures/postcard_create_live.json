@@ -1,0 +1,32 @@
+{
+  "_source": "Shape of a live Stannp US POST /v1/postcards/create response (test-mode fields plus the documented live-mode extras). All values are fake.",
+  "success": true,
+  "data": {
+    "pdf": "https://files.example/test-postcard-50000001.pdf",
+    "id": 50000001,
+    "created": "2026-10-11T15:00:00+00:00",
+    "format": "4x6",
+    "cost": "0.80",
+    "status": "received",
+    "type": "postcard",
+    "title": "",
+    "firstname": "Example",
+    "lastname": "Owner",
+    "company": "",
+    "address1": "101 Example St",
+    "address2": "",
+    "address3": "",
+    "city": "Exampleville",
+    "county": "NY",
+    "zipcode": "10001",
+    "country": "US",
+    "addons": "",
+    "tags": "ejb-example-idem-1",
+    "tracking_ref": null,
+    "production_ref": null,
+    "dispatched": null,
+    "updated": "2026-10-11 15:00:00",
+    "transactional": 0,
+    "class": 0
+  }
+}

@@ -7,10 +7,12 @@ import { MockAdapter } from "./mock.ts";
 import { skyFiFromEnv } from "./skyfi.ts";
 import { treeNationFromEnv } from "./treenation.ts";
 import { zincFromEnv } from "./zinc.ts";
+import { stannpFromEnv } from "./stannp.ts";
+import { luluFromEnv } from "./lulu.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
 //   mouser / craftcloud / pcbway          self when shipTo is owner-home, otherwise others
-//   lob / stannp / goody                  others (mails or gifts a third party)
+//   lob / goody                           others (mails or gifts a third party)
 
 /** place() was refused by the guard BEFORE the vendor was called: no money can have moved. */
 export class GuardRefused extends Error {
@@ -114,6 +116,8 @@ export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => V
   zinc: () => zincFromEnv(),
   treenation: () => treeNationFromEnv(),
   skyfi: () => skyFiFromEnv(),
+  stannp: () => stannpFromEnv(),
+  lulu: () => luluFromEnv(),
 };
 
 export function knownVendors(): string[] {

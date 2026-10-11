@@ -1,0 +1,55 @@
+{
+  "_source": "Shape of Lulu POST /print-jobs/ 201 (OpenAPI Print-Job resource). All values are fake.",
+  "contact_email": "test-owner@example.com",
+  "costs": {
+    "currency": "USD",
+    "line_item_costs": [
+      { "cost_excl_discounts": "4.30", "discounts": [], "quantity": 1, "tax_rate": "0.080000", "total_cost_excl_discounts": "4.30", "total_cost_excl_tax": "4.30", "total_cost_incl_tax": "4.64", "total_tax": "0.34" }
+    ],
+    "shipping_cost": { "tax_rate": "0.08", "total_cost_excl_tax": "4.99", "total_cost_incl_tax": "5.39", "total_tax": "0.40" },
+    "fulfillment_cost": { "total_cost_excl_tax": "0.75", "total_cost_incl_tax": "0.81", "total_tax": "0.06", "tax_rate": "0.08" },
+    "total_cost_excl_tax": "10.04",
+    "total_cost_incl_tax": "10.84",
+    "total_discount_amount": "0.00",
+    "total_tax": "0.80"
+  },
+  "date_created": "2026-10-11T15:00:00.000000Z",
+  "date_modified": "2026-10-11T15:00:00.000000Z",
+  "estimated_shipping_dates": { "arrival_max": "2026-10-22", "arrival_min": "2026-10-19", "dispatch_max": "2026-10-16", "dispatch_min": "2026-10-14" },
+  "external_id": "example-idem-1",
+  "id": 90001,
+  "line_items": [
+    {
+      "external_id": "example-idem-1-1",
+      "id": 91001,
+      "printable_normalization": {
+        "cover": { "source_url": "https://files.example/test-zine/cover.pdf" },
+        "interior": { "source_url": "https://files.example/test-zine/interior.pdf" },
+        "pod_package_id": "0550X0850.FC.STD.SS.080CW444.GXX"
+      },
+      "quantity": 1,
+      "status": { "messages": {}, "name": "CREATED" },
+      "title": "Example Zine",
+      "tracking_id": null,
+      "tracking_urls": []
+    }
+  ],
+  "order_id": null,
+  "production_delay": 60,
+  "production_due_time": null,
+  "shipping_address": {
+    "city": "Exampleville",
+    "country_code": "US",
+    "is_business": false,
+    "name": "Example Owner",
+    "phone_number": "5555550100",
+    "postcode": "10001",
+    "state_code": "NY",
+    "street1": "101 Example St",
+    "street2": ""
+  },
+  "shipping_level": "MAIL",
+  "shipping_option_level": "MAIL",
+  "status": { "changed": "2026-10-11T15:00:00.000000Z", "message": "Print-job is currently being validated", "name": "CREATED" },
+  "tax_country": "US"
+}

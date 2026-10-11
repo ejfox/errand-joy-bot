@@ -1,0 +1,19 @@
+{
+  "_source": "Shape of Lulu GET /print-jobs/{id}/ for a shipped job (OpenAPI Print-Job resource + shipping-notification example). All values are fake.",
+  "id": 90001,
+  "external_id": "example-idem-1",
+  "date_created": "2026-10-11T15:00:00.000000Z",
+  "costs": { "currency": "USD", "total_cost_excl_tax": "10.04", "total_cost_incl_tax": "10.84", "total_tax": "0.80" },
+  "line_items": [
+    {
+      "external_id": "example-idem-1-1",
+      "id": 91001,
+      "quantity": 1,
+      "status": { "messages": { "tracking_id": "TEST-LULU-TRACK-1", "carrier_name": "Carrier" }, "name": "SHIPPED" },
+      "title": "Example Zine",
+      "tracking_id": "TEST-LULU-TRACK-1",
+      "tracking_urls": ["https://tracking.example/TEST-LULU-TRACK-1"]
+    }
+  ],
+  "status": { "changed": "2026-10-14T10:00:00.000000Z", "message": "All line-items were shipped", "name": "SHIPPED" }
+}
