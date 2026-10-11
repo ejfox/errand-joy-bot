@@ -3,7 +3,7 @@
     "test": "deno test --allow-read --allow-write=/tmp --allow-env --allow-net=127.0.0.1 --unstable-kv gate relay tools",
     "test:gate": "deno test --allow-read --allow-write=/tmp --allow-env --allow-net=127.0.0.1 --unstable-kv gate",
     "test:relay": "deno test --allow-read --allow-write=/tmp --allow-env --unstable-kv relay/main_test.ts",
-    "check": "deno check gate/main.ts relay/main.ts tools/design/box.ts tools/design/validate_stl.ts",
+    "check": "deno check gate/main.ts gate/vendor_hosts.ts relay/main.ts tools/design/box.ts tools/design/validate_stl.ts",
     "lint": "deno lint gate relay tools",
     "design:box": "deno run --allow-read --allow-write tools/design/box.ts",
     "design:validate": "deno run --allow-read tools/design/validate_stl.ts",
