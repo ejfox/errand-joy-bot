@@ -253,10 +253,11 @@ Allow the host: `ops/install.sh --allow-net app.skyfi.com`.
   total; tax and shipping 0. 402 → `skyfi_budget_exceeded`, 403 → `skyfi_forbidden` or
   `skyfi_vantor_eula_required` (accept the EULA at <https://app.skyfi.com/accept-vantor-eula>),
   404 → `skyfi_not_found`, 422 → `skyfi_order_rejected`, 429 → `skyfi_order_limit`.
-- `place()`: re-validates and refuses unless the price still equals the quote and fits the
-  hard cap, checks the remaining budget (`GET /auth/whoami`: `budgetAmount −
-  currentBudgetUsage`, refuses `skyfi_budget_insufficient`), then looks for an earlier attempt
-  (`GET /orders?search=<label>`), and only then `POST /order-archive` with `deliveryDriver: NONE`
+- `place()`: first looks for an earlier attempt (`GET /orders?search=<label>`; found → returned
+  as the order, since it already used budget), then re-validates and refuses unless the price
+  still equals the quote and fits the hard cap, checks the remaining budget (`GET /auth/whoami`:
+  `budgetAmount − currentBudgetUsage`, refuses `skyfi_budget_insufficient`), and only then
+  `POST /order-archive` with `deliveryDriver: NONE`
   (SkyFi hosts the files; bucket credentials are never accepted). SkyFi has no idempotency key,
   so the gate key goes into `orderLabel` and `metadata` as `ejb-<key>`. Every failure before the
   POST is a `GuardRefused`; POST rejections with the documented validation codes (400-429, 503)

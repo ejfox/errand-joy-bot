@@ -199,15 +199,21 @@ Deno.test("place: re-validates, checks budget, labels the order with the key; ch
   assertEquals(post.body!.deliveryDriver, "NONE");
   assertEquals((post.body!.metadata as Record<string, string>).ejb_idempotency_key, "ejb-example-idem-1");
   assertEquals(post.body!.aoi, pointToWkt(41.29, -73.92, 1));
-  // order: validate → whoami → lookup → POST; never a tasking endpoint
-  assertEquals(calls.map(path), ["/order-archive/validate", "/auth/whoami", "/orders", "/order-archive"]);
+  // order: lookup → validate → whoami → POST; never a tasking endpoint
+  assertEquals(calls.map(path), ["/orders", "/order-archive/validate", "/auth/whoami", "/order-archive"]);
   assert(!calls.some((c) => c.url.includes("tasking")));
 });
 
 Deno.test("place: an earlier order with the same label is returned, not re-ordered", async () => {
   const q = await quoted();
   const listed = { request: {}, total: 1, orders: [R.orders_list.orders[2]] };
-  const { calls, fetchImpl } = stub([validateOk, whoamiOk, [is("GET", "/orders"), { status: 200, body: listed }], created]);
+  // The earlier order already used the budget: validate would now 402. The lookup comes first.
+  const { calls, fetchImpl } = stub([
+    [is("POST", "/order-archive/validate"), R.errors.budget_402],
+    whoamiOk,
+    [is("GET", "/orders"), { status: 200, body: listed }],
+    created,
+  ]);
   const o = await adapter(fetchImpl).place(req(), q, 5_000, "example-idem-1");
   assertEquals(o.vendorOrderId, "fake-order-0001");
   assert(!calls.some(isOrderPost));

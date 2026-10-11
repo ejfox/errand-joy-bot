@@ -268,8 +268,9 @@ export class SkyFiAdapter implements VendorAdapter {
   }
 
   /**
-   * Re-validates (price must equal the quote and fit the hard cap), checks the SkyFi budget, looks
-   * for an earlier attempt by orderLabel, then POST /order-archive. chargedCents = `orderCost`.
+   * Looks for an earlier attempt by orderLabel (returned as-is), re-validates (price must equal the
+   * quote and fit the hard cap), checks the SkyFi budget, then POST /order-archive.
+   * chargedCents = `orderCost`.
    */
   async place(req: PurchaseRequest, q: Quote, hardCapCents: number, idempotencyKey: string): Promise<Order> {
     if (this.paused) throw new GuardRefused("vendor_paused");
@@ -283,6 +284,17 @@ export class SkyFiAdapter implements VendorAdapter {
     }
     if (q.vendorRef !== `skyfi:archive:${spec.archiveId}`) throw new GuardRefused("skyfi_quote_mismatch");
 
+    // An earlier attempt first: its order already used budget / an order slot, so re-validating
+    // before this lookup would refuse a retry whose money already moved.
+    const label = await skyFiLabel(idempotencyKey);
+    let earlier: SkyFiOrder | undefined;
+    try {
+      earlier = await this.findByLabel(label);
+    } catch {
+      throw new GuardRefused("skyfi_lookup_failed");
+    }
+    if (earlier) return this.toOrder(earlier);
+
     // Everything up to POST /order-archive is read-only: any failure means nothing was ordered.
     let aoi: string, estimate: number, remaining: number;
     try {
@@ -295,15 +307,6 @@ export class SkyFiAdapter implements VendorAdapter {
     if (estimate > hardCapCents) throw new GuardRefused("max_price_exceeded");
     if (estimate !== q.totalCents) throw new GuardRefused("skyfi_price_changed");
     if (remaining < estimate) throw new GuardRefused("skyfi_budget_insufficient");
-
-    const label = await skyFiLabel(idempotencyKey);
-    let earlier: SkyFiOrder | undefined;
-    try {
-      earlier = await this.findByLabel(label);
-    } catch {
-      throw new GuardRefused("skyfi_lookup_failed");
-    }
-    if (earlier) return this.toOrder(earlier);
 
     const body = {
       aoi,
