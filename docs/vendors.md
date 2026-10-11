@@ -10,7 +10,8 @@ Shipped today: `zinc` (see [Zinc](#zinc-retail-amazon-walmart-target-mcmaster-ca
 `stannp` ([Stannp](#stannp-us-postcards-and-letters)), `lulu` ([Lulu](#lulu-print-api-zines-and-books)),
 `slant3d` ([Slant 3D](#slant-3d-3d-printing)),
 `prodigi` ([Prodigi](#prodigi-fine-art-prints-posters-puzzles)), `mouser`
-([Mouser](#mouser-electronics-adafruit-parts)) and
+([Mouser](#mouser-electronics-adafruit-parts)), `cj`
+([CJdropshipping](#cjdropshipping-goods-from-china-ddp-only)) and
 `mock`, a deterministic fake vendor that moves no money. Use the mock for the
 rehearsal stage in [runbook.md](runbook.md).
 
@@ -26,6 +27,7 @@ rehearsal stage in [runbook.md](runbook.md).
 | Slant 3D (`slant3d`) | 3D prints (FDM) | `self` to owner-home, else `others` | card on the Slant account | Privacy merchant-locked card; the draft total is re-read before processing | `SLANT3D_API_KEY`, `SLANT3D_PLATFORM_ID`, `SLANT3D_CUSTOMER_EMAIL`, `OWNER_SHIP_TO_JSON`; opt. `SLANT3D_BASE_URL` | `slant3d-<host>-<yyyy-mm>` |
 | Prodigi (`prodigi`) | art prints, posters, puzzles | `self` to owner-home, else `others` | card on file | Privacy merchant-locked card, monthly limit | `PRODIGI_API_KEY`, `PRODIGI_ENV` (sandbox default), `OWNER_SHIP_TO_JSON`; opt. `PRODIGI_SHIPPING_METHOD`, `PRODIGI_TAX_RATE` | `prodigi-<host>-<yyyy-mm>` |
 | Mouser (`mouser`) | electronics, Adafruit parts | `self` to owner-home, else `others` | saved card | Privacy merchant-locked card, monthly limit; dry-run total checked before submit | `MOUSER_SEARCH_API_KEY`, `MOUSER_ORDER_API_KEY`, `MOUSER_CARD_LAST4`, `OWNER_SHIP_TO_JSON`; opt. `MOUSER_SHIPPING_CODE`, `MOUSER_TAX_RATE`, `MOUSER_SHIPPING_ESTIMATE_CENTS` | `mouser-<host>-<yyyy-mm>` |
+| CJdropshipping (`cj`) | catalog goods from China, US duty prepaid (DDP) | `self` to owner-home; anything else refused | prepaid CJ wallet | the wallet balance, auto top-up OFF; order total re-read before paying | `CJ_API_KEY`, `CJ_ENV` (sandbox default), `OWNER_SHIP_TO_JSON`; opt. `CJ_FROM_COUNTRY`, `CJ_LOGISTIC_NAME`, `CJ_DUTY_RATE`, `CJ_DUTY_FLAT_CENTS`, `CJ_MIN_INTERVAL_MS`, `CJ_BASE_URL` | `cj-<host>-<yyyy-mm>` |
 | mock (`mock`) | rehearsal | per request | none | none (moves no money) | none | none |
 
 The gate-side caps (tiers, day / month / per-vendor windows, the per-order hard cap) apply to all
@@ -720,6 +722,120 @@ has no sandbox; the dry run is the rehearsal.
 so it cannot reach the cart or order endpoints.
 `MOUSER_LIVE=1 deno test --allow-read --allow-env --allow-net=api.mouser.com --filter LIVE gate/adapters/mouser_test.ts`
 with `MOUSER_SEARCH_API_KEY` in the environment (optional `MOUSER_LIVE_PART`, default `485-4116`).
+
+## CJdropshipping (goods from China, DDP only)
+
+`gate/adapters/cj.ts`, against CJ's REST API 2.0 (`https://developers.cjdropshipping.com/api2.0/v1`).
+Built from CJ's docs only: [auth](https://developers.cjdropshipping.com/en/api/api2/api/auth.html),
+[sandbox](https://developers.cjdropshipping.com/en/api/start/sandbox.html),
+[logistics](https://developers.cjdropshipping.com/en/api/api2/api/logistic.html),
+[orders and wallet](https://developers.cjdropshipping.com/en/api/api2/api/shopping.html),
+[products and sourcing](https://developers.cjdropshipping.com/en/api/api2/api/product.html),
+[error codes](https://developers.cjdropshipping.com/en/api/api2/standard/ps-code.html),
+[rate limits](https://developers.cjdropshipping.com/en/api/api2/standard/limit.html).
+CJ's own MCP server is not used: it has no usable license, and its "confirm sensitive operation"
+step logs a prompt and then runs the payment anyway.
+
+**Env** (gate `.env` only):
+
+| Var | What |
+|---|---|
+| `CJ_API_KEY` | the API key from My CJ → Authorization → API (type "API Key"). The adapter trades it for an access token (`/authentication/getAccessToken`, 180 days), caches it in memory, refreshes it near expiry and re-mints on `1600001`. No email needed. The token is never logged or stored |
+| `CJ_ENV` | `sandbox` (default) or `production`. **Sandbox is a per-order flag, not a host**: sandbox mode sends `isSandbox: 1` on every create, and CJ simulates the balance payment (no deduction, no fulfillment). Only `production` sends `0` |
+| `OWNER_SHIP_TO_JSON` | shared with Zinc (same shape, base64 allowed). Must be a US address |
+| `CJ_FROM_COUNTRY` | optional origin warehouse, default `CN`. `US` means a CJ US warehouse: domestic, no import duty, so no DDP check |
+| `CJ_LOGISTIC_NAME` | optional: pin one shipping line by name. It still has to be DDP |
+| `CJ_DUTY_RATE`, `CJ_DUTY_FLAT_CENTS` | the fallback duty estimate used only as a cross-check: default `0.40` of goods + shipping, plus `300` cents |
+| `CJ_MIN_INTERVAL_MS` | optional pacing between calls, default `1100` (CJ's free tier allows 1 request per second) |
+| `CJ_BASE_URL` | optional, default `https://developers.cjdropshipping.com/api2.0/v1` (https only) |
+
+Hosts: `developers.cjdropshipping.com` (one host for sandbox and production).
+
+**How it maps:**
+
+- **sku**: a CJ variant id (`vid`), or `pid:vid` (the variant must belong to that product).
+- `quote()`: per item `GET /product/variant/queryByVid?features=enable_inventory` → `variantSellPrice`
+  × qty, under `maxUnitCents`, with stock at the origin country. Then one
+  `POST /logistic/freightCalculate` (origin, `US`, the owner's ZIP, all variants). Each line has
+  `logisticPrice`, `taxesFee` ("US taxes fee, not included in postage"), `clearanceOperationFee` and
+  `totalPostageFee`. Quote parts: subtotal = goods, shipping = `logisticPrice`, tax = `taxesFee`,
+  fee = `clearanceOperationFee` plus any part of `totalPostageFee` the other fields don't explain
+  (counted, the safe direction). `totalCents` = goods + freight + duties/fees. The cheapest DDP
+  line wins (ties by name). Note: 1.1's field table lists the tax fields but its example response
+  omits them; the live sandbox test shows what CJ really returns.
+- **DDP or nothing.** From a non-US origin, a line without a positive `taxesFee` is not DDP: duty
+  would be collected by the carrier at the door, off-ledger, and could land above the hard cap. No
+  DDP line → `cj_not_ddp`.
+- **Duty cross-check.** Estimate = round((goods + shipping) × `CJ_DUTY_RATE`) + `CJ_DUTY_FLAT_CENTS`.
+  If CJ's taxes + clearance fee are under half of it → `cj_duty_suspicious`. CJ calls the field a
+  "US taxes fee", and its COGS docs separate `taxes` (US tax) from `dutyTaxes`, so it may be closer
+  to sales tax than to customs duty. If so, **expect this check to refuse often**. That is the
+  intended direction; lower `CJ_DUTY_RATE` only after the sandbox shows what CJ actually collects.
+- `place()`, in this order. No money moves before step 4:
+  1. `POST /shopping/order/createOrderV2` with `payType: 3` (create only, no payment), `orderNumber`
+     = the gate idempotency key (or `ejb-` + a sha256 prefix when the key is over 50 chars or has
+     odd characters), the quoted `logisticName`, the owner address and `isSandbox`. A duplicate
+     (`1603003`) looks the order up by that number and resumes; one already paid is returned as is.
+     Any create error is `GuardRefused` (payType 3 can't charge).
+  2. Re-read with `GET /shopping/order/getOrderDetail`. Refuse, deleting the unpaid order, if CJ
+     intercepted it, logistics are missing, the sandbox flag doesn't match, `orderAmount` is above
+     the hard cap (`max_price_exceeded`), or it fell below the quote by more than half the quoted
+     duties (`cj_order_total_excludes_duties`: the duty looks dropped).
+  3. `GET /shopping/pay/getBalance`: spendable = `amount` − `freezeAmount`. Below the order total →
+     `insufficient_funds`, no payment (production; sandbox payments are simulated, so the check is
+     recorded but not enforced there).
+  4. Pay the whole order: `POST /shopping/pay/payBalanceV2 {shipmentOrderId}` when create returned
+     one, else `payBalance {orderId}`. `1604000` (balance insufficient) and `1604001` (balance
+     payment restricted) are `GuardRefused`. Any other failure is `CjError` → `outcome_unknown` +
+     STOP.
+  5. Re-read: the order must now be paid (status past `UNPAID` or a `paymentDate`), else
+     `cj_pay_unconfirmed` (`CjError`). `chargedCents` = the paid `orderAmount`.
+  **Open question for the first sandbox run:** CJ's docs say "payType=3: create the order only,
+  then call Pay Balance V2 yourself", but V2 takes a `shipmentOrderId` that may only exist after
+  add-to-cart + confirm. If the sandbox shows `payBalance` refusing a `CREATED` order, `place()`
+  fails as `CjError` (outcome_unknown + STOP: the safe failure, since a pay error can't prove
+  nothing moved) and the cart/confirm steps (`/shopping/order/addCart`, `addCartConfirm`,
+  `saveGenerateParentOrder`) need adding. Don't enable `production` before that
+  run passes.
+- `status()`: `getOrderDetail`. `CREATED`, `IN_CART`, `UNPAID`, `UNSHIPPED` (`PENDING`,
+  `PROCESSING`) → `open`; `SHIPPED` → `shipped`; `DELIVERED` → `delivered`; `CANCELLED` →
+  `cancelled`. `tracking` = `trackNumber`; `raw.links` = the https `trackingUrl`.
+- `cancel()`: CJ deletes only `CREATED` / `IN_CART` orders (`DELETE /shopping/order/deleteOrder`).
+  Anything later returns `false`; a paid order can't be cancelled through the API.
+- `listCharges()`: `GET /shopping/order/list` per status `UNSHIPPED`, `SHIPPED`, `DELIVERED`,
+  filtered by `paymentDateFrom/To` (UTC, windows under CJ's 90-day limit). One charge per paid
+  order = `orderAmount`, keyed by `orderId` (what `place()` returns). Only orders in the adapter's
+  mode count (sandbox or real). Cancelled orders are refunded and skipped. An order missing its
+  amount or payment date fails reconcile closed. Wallet spending that isn't an order (paid
+  sourcing, CJ Prime, freight payments) isn't listed: keep this account for the gate only. An
+  order placed by hand in My CJ shows up as an unmatched charge and trips STOP.
+- `reachFor`: `self` to owner-home, `others` otherwise; `place()` refuses anything but owner-home.
+- `pause()` is a local flag. **The real kill is deleting the API key** in My CJ → Authorization →
+  API. The `logout` endpoint doesn't help: the key mints a new token.
+
+**Research errand: sourcing requests.** `cjSourcingRequest(url, note, {imageUrl?})` posts
+`/product/sourcing/create` so CJ staff look for an off-catalog item (a 1688, Taobao or AliExpress
+link). It is exported only: not wired into `quote()` / `place()`, not reachable through the gate's
+`/api`, and it buys nothing. When CJ finds the item it gets a variant id, and buying it is then an
+ordinary `cj` request through the gate. CJ requires an image field; without `imageUrl` the product
+URL is sent there. The billing history has a "Paid Sourcing" trade type, so check in My CJ whether
+sourcing is free on your plan before using it.
+
+**Vendor-side caps.** CJ has no per-key spend limit. The cap is the wallet:
+
+1. Make a CJ account at <https://www.cjdropshipping.com>, install the **API** app (Apps → Install
+   App → Others → API), then My CJ → Authorization → API → **Add API**, type **API Key**, name it
+   `cj-<host>-<yyyy-mm>`. Paste it with `ops/set-key.sh CJ_API_KEY`.
+2. Top up the wallet with a small amount (e.g. $50) and **turn off any automatic top-up or
+   automatic card payment** in My CJ → Wallet. The API docs don't describe auto top-up, so check
+   the wallet settings yourself; the balance is only a cap if nothing refills it.
+3. Keep `CJ_ENV` unset (sandbox) until the live sandbox test passes.
+
+**Sandbox test** (opt-in, never runs in `deno task test`):
+`CJ_LIVE=1 CJ_API_KEY=… CJ_LIVE_SKU=<vid> OWNER_SHIP_TO_JSON=… deno test --allow-read --allow-env --allow-net=developers.cjdropshipping.com --filter LIVE gate/adapters/cj_test.ts`.
+It refuses unless `CJ_ENV` is unset or `sandbox`, and its fetch wrapper throws on any create
+without `isSandbox: 1`. It prints the quote (which may legitimately be refused as `cj_not_ddp` or
+`cj_duty_suspicious`), the order, its status and the cancel result.
 
 ## Known gaps
 

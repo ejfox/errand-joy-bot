@@ -1,0 +1,32 @@
+{
+  "_note": "getBalance, pay, sourcing and error envelopes from the CJ docs (ps-code.html). Fake values.",
+  "balance": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": { "amount": 50.0, "noWithdrawalAmount": null, "freezeAmount": null },
+    "requestId": "example-request-balance"
+  },
+  "balance_low": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": { "amount": 40.0, "noWithdrawalAmount": null, "freezeAmount": 10.0 },
+    "requestId": "example-request-balance-low"
+  },
+  "pay_ok": { "code": 200, "result": true, "message": "Success", "data": null, "requestId": "example-request-pay" },
+  "delete_ok": { "code": 200, "result": true, "message": "Success", "data": "fake-order-0001", "requestId": "example-request-delete" },
+  "sourcing_ok": {
+    "success": true,
+    "code": 0,
+    "message": null,
+    "data": { "cjSourcingId": "285", "result": "success" },
+    "requestId": "example-request-sourcing"
+  },
+  "bad_token": { "code": 1600001, "result": false, "message": "Invalid API key or access token", "data": null, "requestId": "example-request-e1", "success": false },
+  "order_not_found": { "code": 1600300, "result": false, "message": "order not found", "data": null, "requestId": "example-request-e2", "success": false },
+  "duplicate_order": { "code": 1603003, "result": false, "message": "Order exist, please do not duplicate create", "data": null, "requestId": "example-request-e3", "success": false },
+  "balance_insufficient": { "code": 1604000, "result": false, "message": "Balance is insufficient", "data": null, "requestId": "example-request-e4", "success": false },
+  "rate_limited": { "code": 1600200, "result": false, "message": "Too much request", "data": null, "requestId": "example-request-e5", "success": false },
+  "param_error": { "code": 1600100, "result": false, "message": "Param error", "data": null, "requestId": "example-request-e6" }
+}

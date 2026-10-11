@@ -332,6 +332,7 @@ export const VENDOR_LABELS: Record<string, string> = {
   treenation: "trees (Tree-Nation)",
   skyfi: "satellite image (SkyFi)",
   oshpark: "circuit boards (OSH Park)",
+  cj: "China via CJdropshipping",
 };
 
 export function vendorLabel(vendor: string): string {

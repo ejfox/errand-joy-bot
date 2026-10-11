@@ -14,6 +14,7 @@ import { prodigiFromEnv } from "./prodigi.ts";
 import { mouserFromEnv } from "./mouser.ts";
 import { lobFromEnv } from "./lob.ts";
 import { oshParkFromEnv } from "./oshpark.ts";
+import { cjFromEnv } from "./cj.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
 //   craftcloud / pcbway                   self when shipTo is owner-home, otherwise others
@@ -128,6 +129,7 @@ export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => V
   mouser: () => mouserFromEnv(),
   lob: () => lobFromEnv(),
   oshpark: () => oshParkFromEnv(),
+  cj: () => cjFromEnv(),
 };
 
 export function knownVendors(): string[] {
@@ -155,6 +157,8 @@ export const VENDOR_HOSTS: Readonly<Record<string, readonly string[]>> = {
   mouser: ["api.mouser.com"],
   lob: ["api.lob.com"],
   oshpark: ["oshpark.com"],
+  // Sandbox is a per-order flag (isSandbox), not a host: one host for both.
+  cj: ["developers.cjdropshipping.com"],
 };
 
 /** Deduped --allow-net hosts for the enabled vendors. Unknown vendors throw (closed allowlist). */

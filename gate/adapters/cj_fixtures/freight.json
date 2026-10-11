@@ -1,0 +1,72 @@
+{
+  "_note": "freightCalculate (1.1) shape: logisticAging, logisticPrice, logisticPriceCn, logisticName, taxesFee, clearanceOperationFee, totalPostageFee. Fake values.",
+  "ddp_and_not": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": [
+      {
+        "logisticAging": "8-12",
+        "logisticPrice": 3.1,
+        "logisticPriceCn": 22.0,
+        "logisticName": "Example Postal (no tax)",
+        "taxesFee": null,
+        "clearanceOperationFee": null,
+        "totalPostageFee": 3.1
+      },
+      {
+        "logisticAging": "7-12",
+        "logisticPrice": 4.71,
+        "logisticPriceCn": 30.54,
+        "logisticName": "Example DDP Line",
+        "taxesFee": 7.2,
+        "clearanceOperationFee": 0.5,
+        "totalPostageFee": 12.41
+      },
+      {
+        "logisticAging": "4-7",
+        "logisticPrice": 9.9,
+        "logisticPriceCn": 70.0,
+        "logisticName": "Example DDP Express",
+        "taxesFee": 9.0,
+        "clearanceOperationFee": 0.5,
+        "totalPostageFee": 19.4
+      }
+    ],
+    "requestId": "example-request-freight",
+    "success": true
+  },
+  "none_ddp": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": [
+      {
+        "logisticAging": "2-5",
+        "logisticPrice": 4.71,
+        "logisticPriceCn": 30.54,
+        "logisticName": "USPS+"
+      }
+    ],
+    "requestId": "example-request-freight-2",
+    "success": true
+  },
+  "low_duty": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": [
+      {
+        "logisticAging": "7-12",
+        "logisticPrice": 4.71,
+        "logisticPriceCn": 30.54,
+        "logisticName": "Example Cheap Tax Line",
+        "taxesFee": 0.9,
+        "clearanceOperationFee": 0.2,
+        "totalPostageFee": 5.81
+      }
+    ],
+    "requestId": "example-request-freight-3",
+    "success": true
+  }
+}

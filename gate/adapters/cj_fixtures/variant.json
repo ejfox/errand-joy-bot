@@ -1,0 +1,33 @@
+{
+  "code": 200,
+  "result": true,
+  "message": "Success",
+  "data": {
+    "vid": "fake-vid-0001",
+    "pid": "fake-pid-0001",
+    "variantName": null,
+    "variantNameEn": "example desk lamp Grey",
+    "variantSku": "test-sku-grey",
+    "barcode": "0000000000001",
+    "variantUnit": null,
+    "variantKey": "Grey",
+    "variantLength": 30,
+    "variantWidth": 30,
+    "variantHeight": 30,
+    "variantVolume": 27000,
+    "variantWeight": 300,
+    "variantSellPrice": 12.5,
+    "createTime": "2026-03-15T14:07:26.000+00:00",
+    "inventories": [
+      {
+        "countryCode": "CN",
+        "totalInventory": 500,
+        "cjInventory": 0,
+        "factoryInventory": 500,
+        "verifiedWarehouse": 2,
+        "stock": [{ "stockId": "fake-stock-0001", "inventory": 0, "factoryInventory": 500 }]
+      }
+    ]
+  },
+  "requestId": "example-request-variant"
+}
