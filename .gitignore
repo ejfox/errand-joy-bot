@@ -19,3 +19,5 @@ config.toml
 overlays/
 local/
 .DS_Store
+# Claude Code local state and agent worktrees
+.claude/
