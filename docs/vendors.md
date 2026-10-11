@@ -4,8 +4,9 @@ A vendor is a code adapter, not a config entry. The allowlist is closed: the gat
 buys from adapters registered in `gate/adapters/registry.ts` **and** listed in
 `vendors` in `config.toml`. Adding one is a reviewed code change.
 
-Shipped today: `zinc` (see [Zinc](#zinc-retail-amazon-walmart-target-mcmaster-carr) below) and
-`mock`, a deterministic fake vendor that moves no money. Use the mock for the
+Shipped today: `zinc` (see [Zinc](#zinc-retail-amazon-walmart-target-mcmaster-carr) below),
+`treenation` ([Tree-Nation](#tree-nation-tree-planting)), `skyfi`
+([SkyFi](#skyfi-archive-satellite-imagery)) and `mock`, a deterministic fake vendor that moves no money. Use the mock for the
 rehearsal stage in [runbook.md](runbook.md).
 
 ## The adapter interface
@@ -86,7 +87,7 @@ one that still holds if the gate host is compromised.
 | retailer shipping to you | `others` | `self` for the owner-home label, else `others` |
 | electronics distributor | `others` | same as above |
 | physical mail to a third party (Lob, Stannp) | `others` | always `others` (always asks) |
-| tree planting, satellite imagery tasking | `world` | `world` |
+| tree planting (Tree-Nation), archive satellite imagery (SkyFi) | `world` | `world`; `others` for a third-party `shipTo` (both refuse it at `place()`) |
 | gift services | `others` | always `others` |
 
 ## Zinc (retail: Amazon, Walmart, Target, McMaster-Carr...)
@@ -155,8 +156,135 @@ or email. Rehearsal products live at `https://zinc.com/shop/products/test-*` (`t
 `ZINC_SANDBOX_LIVE=1 ZINC_API_KEY=zn_test_… deno test --allow-read --allow-env --allow-net=api.zinc.com --filter LIVE gate/adapters/zinc_test.ts`
 (it refuses to run with anything but a `zn_test_` key).
 
+## Tree-Nation (tree planting)
+
+`gate/adapters/treenation.ts`, against the Tree-Nation API (docs:
+<https://docs.tree-nation.com/llms-full.txt>, spec: <https://docs.tree-nation.com/openapi.json>,
+flow and test host: the [gifting integration guide](https://docs.tree-nation.com/tree-nation-api-gifting-trees-integration-guide.md)).
+Plants trees from the account's prepaid planting credit. Reach `world`; the request category
+`tree` is a world category by default.
+
+**Env** (gate `.env` only):
+
+| Var | What |
+|---|---|
+| `TREENATION_API_KEY` | the bearer token Tree-Nation issues (test and live tokens are separate) |
+| `TREENATION_BASE_URL` | optional, **default `https://youcannevertestenough.tree-nation.com` (the test host)**. Set `https://tree-nation.com` to plant for real |
+| `TREENATION_EUR_USD_RATE` | optional, default `1.25`: USD per EUR for quotes (prices are EUR; `Quote` is USD). Deliberately high, so the ledger over-counts |
+
+Allow the hosts: `ops/install.sh --allow-net tree-nation.com,youcannevertestenough.tree-nation.com`.
+
+**Items:** exactly one item, `qty` = number of trees (1-1000):
+`species:<id>` (a species id from `GET /api/species`) or `project:<id>` (the cheapest
+in-stock species of that project). Species ids and prices differ between the test and live hosts.
+
+**How it maps:**
+
+- `quote()`: the public `GET /api/species/{id}` (or `/api/projects/{id}/species`) price in EUR ×
+  qty, converted at `TREENATION_EUR_USD_RATE` and rounded up. No tax, shipping or fee. Needs
+  `stock >= qty`. The species quoted is pinned in `vendorRef` (`treenation:species:<id>`). The
+  token is never sent to these public endpoints.
+- `place()`: re-reads the pinned species and refuses (`GuardRefused`) if price × qty now
+  converts above the quote or the hard cap, then `POST /api/plant {species_id, quantity,
+  order_id, language}`. `order_id` is the gate's idempotency key (or a sha256-derived id when it's
+  over 64 chars). It never sends `recipients` or `message`, so nobody else is emailed and nothing
+  private lands on the public certificate page. A third-party `shipTo` is refused.
+- Tree-Nation answers HTTP 200 for business errors. `errorCode` `species`, `quantity`,
+  `tree_template`, `planter`, `recipients` (and HTTP 401/403) → `GuardRefused` (nothing planted).
+  `already_processed`, any undocumented code (e.g. out of credit), 5xx and network errors →
+  `TreeNationError` → `outcome_unknown` + STOP: there is no endpoint to check what was planted.
+  `status: "processing"` with a `payment_id` counts as placed.
+- `vendorOrderId` = `payment_id`; `chargedCents` = the quoted USD total. The certificate and
+  collect URLs (`trees[].certificate_url` / `collect_url`, in the guide's example response but
+  not in the OpenAPI schema) go in `Order.raw.links`, certificates first, for the delivery why-note.
+- `status()`: there is no status endpoint and planting is immediate, so it reports `delivered`.
+- `cancel()` → `false` (planting can't be undone). `listCharges()` → `[]`: Tree-Nation exposes
+  no payment history, so **reconcile cannot catch a planting the gate didn't make here**; the
+  prepaid credit is the only vendor-side cap. `authCheck()` (`GET /api/authcheck`) checks the token.
+- `pause()` is a local flag. The real kill is asking Tree-Nation to revoke the token.
+
+**Getting access (not self-serve):**
+
+1. Create a company account on tree-nation.com, and a test account on the test host.
+2. Request a test token with the form linked from the integration guide. The live token comes after
+   testing. Name it `treenation-<host>-<yyyy-mm>` on your side, e.g. `treenation-ejfvps-2026-10`.
+3. Pay by card: credit the account with a small amount (e.g. €20, enough for 40-60 trees).
+   **The card option auto-recharges when the balance falls to 10% of the last top-up**, which
+   makes the balance useless as a cap. Ask Tree-Nation to switch auto-recharge off, or to set a
+   `credit_unpaid_limit` on the API user. The adapter never calls `POST /api/credit`.
+4. `ops/set-key.sh TREENATION_API_KEY`, set `TREENATION_BASE_URL`, restart.
+
+Opt-in live test (quote only, no token needed):
+`TREENATION_LIVE=1 deno test --allow-read --allow-env --allow-net=youcannevertestenough.tree-nation.com --filter LIVE gate/adapters/treenation_test.ts`
+(add `TREENATION_BASE_URL=https://tree-nation.com` and `--allow-net=tree-nation.com` for live prices).
+
+**Not yet possible: planting "for" someone.** `recipients[{name, email}]` makes Tree-Nation
+email that person a certificate (reach `others`, so it always asks). `PurchaseRequest` has no
+recipient field yet, so the adapter refuses it.
+
+## SkyFi (archive satellite imagery)
+
+`gate/adapters/skyfi.ts`, against the SkyFi Platform API 2.0 (`https://app.skyfi.com/platform-api`,
+spec: <https://app.skyfi.com/platform-api/openapi.json>, agent flow: <https://mcp.skyfi.com/docs>).
+Buys **archive** imagery (existing captures in SkyFi's catalog, from about $15). Reach `world`; the
+request category `satellite` is a world category by default. **Tasking (new captures, $200+) is
+refused**: the adapter never calls the tasking endpoints, and a `tasking:` sku is an error.
+
+**Env** (gate `.env` only):
+
+| Var | What |
+|---|---|
+| `SKYFI_API_KEY` | sent as the `X-Skyfi-Api-Key` header. There is no sandbox host |
+| `SKYFI_BASE_URL` | optional, default `https://app.skyfi.com/platform-api` (https only) |
+
+Allow the host: `ops/install.sh --allow-net app.skyfi.com`.
+
+**Items** (skus are capped at 128 chars and `Item` has no geometry field, so the area travels in a sku):
+
+- exactly one `archive:<archiveId>` (from a catalog search: `POST /archives` or the SkyFi MCP), qty 1;
+- plus at most one area item, qty 1: `point:<lat>,<lon>,<radiusKm>` (a square of side 2 × radius,
+  radius up to 25 km), `bbox:<minLon>,<minLat>,<maxLon>,<maxLat>` (up to 2° a side), or
+  `aoi:POLYGON((lon lat, …))` (a simple closed WKT ring; only coarse ones fit in 128 chars);
+- no area item → the archive's whole footprint (`GET /archives/{id}`), priced like any other.
+
+**How it maps:**
+
+- `quote()`: `POST /order-archive/validate` (free, creates nothing) → `estimatedCostCents` is the
+  total; tax and shipping 0. 402 → `skyfi_budget_exceeded`, 403 → `skyfi_forbidden` or
+  `skyfi_vantor_eula_required` (accept the EULA at <https://app.skyfi.com/accept-vantor-eula>),
+  404 → `skyfi_not_found`, 422 → `skyfi_order_rejected`, 429 → `skyfi_order_limit`.
+- `place()`: re-validates and refuses unless the price still equals the quote and fits the
+  hard cap, checks the remaining budget (`GET /auth/whoami`: `budgetAmount −
+  currentBudgetUsage`, refuses `skyfi_budget_insufficient`), then looks for an earlier attempt
+  (`GET /orders?search=<label>`), and only then `POST /order-archive` with `deliveryDriver: NONE`
+  (SkyFi hosts the files; bucket credentials are never accepted). SkyFi has no idempotency key,
+  so the gate key goes into `orderLabel` and `metadata` as `ejb-<key>`. Every failure before the
+  POST is a `GuardRefused`; POST rejections with the documented validation codes (400-429, 503)
+  are too. 5xx and network errors → `SkyFiError` → `outcome_unknown` + STOP.
+- `vendorOrderId` = `orderId` (not the item `id`); `chargedCents` = `orderCost`.
+- `status()`: `CREATED` / `STARTED` / `PROVIDER_PENDING` → `open`; provider-complete, processing
+  and delivery-pending stages → `shipped`; `DELIVERY_COMPLETED` with a download URL → `delivered`,
+  the URLs (view-ready COG first, then image, COG, payload) in `raw.links` for the why-note;
+  any `*_FAILED` → `failed`. Archive delivery is usually within 24 hours.
+- `cancel()` → `false` (no endpoint). `listCharges()` pages `GET /orders` newest first back to
+  the cutoff: one charge per `orderId`, amount `orderCost`, `PAYMENT_FAILED` skipped. Orders you
+  place by hand in the SkyFi app (or via the MCP) show up and trip STOP unless the ledger knows them.
+- `budget()` reports the SkyFi budget and remaining cents for ops.
+- `pause()` is a local flag. The real kill is deleting the API key in the SkyFi app.
+
+**Vendor-side caps.** SkyFi bills a card (`hasValidSharedCard`); the cap is SkyFi's own
+budget (`budgetAmount`), which `place()` and validate (402) both enforce.
+
+1. Create a SkyFi account at <https://app.skyfi.com>, add a single-merchant virtual card with a
+   monthly limit (e.g. $60).
+2. Set the account budget low (e.g. $50/month) and create an API key; name it
+   `skyfi-<host>-<yyyy-mm>`, e.g. `skyfi-ejfvps-2026-10`. `ops/set-key.sh SKYFI_API_KEY`.
+3. If you want Vantor scenes, accept the Vantor EULA once in the app.
+
+Opt-in live test (quote only: whoami, a catalog search near Peekskill, one validate; nothing is ordered):
+`SKYFI_LIVE=1 SKYFI_API_KEY=… deno test --allow-read --allow-env --allow-net=app.skyfi.com --filter LIVE gate/adapters/skyfi_test.ts`
+
 ## Roadmap adapters
 
-Mouser (electronics), Lob and Stannp (physical mail),
-Tree-Nation (tree planting), SkyFi (satellite imagery). None are built. Each needs its
+Mouser (electronics), Lob and Stannp (physical mail). None are built. Each needs its
 own ToS read, key, vendor-side cap and `reachFor`. PRs welcome.
