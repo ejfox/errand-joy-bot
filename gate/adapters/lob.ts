@@ -8,9 +8,16 @@
 //   separate postage line, so shippingCents = 0.
 // - Lob charges no sales tax on print or postage (since 2026-10-01, help.lob.com sales-tax FAQ).
 //   Paying Lob by card adds a 3% service fee; by ACH, none. LOB_CARD_FEE_RATE models it (default 0.03).
-// - Usage is billed monthly in arrears. Lob has NO per-key spend cap and does not stop mail on
-//   overage, so the gate's caps are the only caps. pause() is local; the real kill is disabling the
-//   live key in the Lob dashboard (Settings → API Keys).
+// - Usage is funded from Lob Credits. Lob has NO per-key spend cap, and when credits run out it does
+//   not refuse: it HOLDS postcards and mails the whole backlog the moment credit is topped up. So
+//   place() reads the credits balance (GET /accounts/credits_balance, docs "Get Lob Credits Balance")
+//   and refuses `lob_insufficient_credit` unless balance ≥ this piece + every unsent piece of ours.
+//   If the balance can't be read it refuses `lob_balance_unavailable` unless
+//   LOB_ALLOW_UNCHECKED_BALANCE=1. pause() is local; the real kill is disabling the live key in the
+//   Lob dashboard (Settings → API Keys).
+// - Every postcard gets a send_date LOB_SEND_DELAY_MINUTES (default 60) out, so cancel() has a
+//   window (Lob's default cancellation window is 5 minutes). Scheduling is a paid-edition feature:
+//   if the account's edition rejects send_date, place() fails cleanly (GuardRefused); set 0 to omit.
 // - Test mode is per KEY (`test_…` vs `live_…`), same base URL. Test postcards are free, never
 //   print or mail, and never get tracking events.
 import { OWNER_HOME } from "../types.ts";
@@ -26,6 +33,10 @@ export const LOB_POSTCARD_4X6_CENTS = 91;
 export const LOB_POSTCARD_6X9_CENTS = 103;
 /** Lob's card service fee. Set LOB_CARD_FEE_RATE=0 when the account pays by ACH. */
 export const LOB_DEFAULT_CARD_FEE_RATE = 0.03;
+/** Minutes between place() and Lob's send_date: the window in which cancel() still works. */
+export const LOB_DEFAULT_SEND_DELAY_MINUTES = 60;
+/** How far back place() looks for our own unsent postcards when checking credit. */
+const PENDING_LOOKBACK_MS = 14 * 24 * 3600_000;
 /** Message length the back layout fits, per size. */
 export const LOB_MESSAGE_MAX_CHARS: Record<PostcardSize, number> = { "4x6": 350, "6x9": 600 };
 const TIMEOUT_MS = 30_000;
@@ -55,7 +66,12 @@ export interface LobAdapterOptions {
   postcard4x6Cents?: number;
   postcard6x9Cents?: number;
   cardFeeRate?: number;
+  /** send_date offset in minutes; 0 omits send_date. Default 60. */
+  sendDelayMinutes?: number;
+  /** Place even when the credits balance can't be read (LOB_ALLOW_UNCHECKED_BALANCE=1). */
+  allowUncheckedBalance?: boolean;
   fetchImpl?: typeof fetch;
+  now?: () => Date;
 }
 
 /** A Lob failure where a postcard MAY have been created (or we can't tell): the gate records outcome_unknown. */
@@ -212,7 +228,10 @@ export class LobAdapter implements VendorAdapter {
   private readonly ownerShipTo?: string | ZincAddress;
   readonly priceCents: Record<PostcardSize, number>;
   readonly cardFeeRate: number;
+  readonly sendDelayMinutes: number;
+  readonly allowUncheckedBalance: boolean;
   private readonly fetchImpl: typeof fetch;
+  private readonly now: () => Date;
 
   constructor(opts: LobAdapterOptions = {}) {
     this.apiKey = opts.apiKey ?? "";
@@ -238,7 +257,14 @@ export class LobAdapter implements VendorAdapter {
     if (!(Number.isFinite(this.cardFeeRate) && this.cardFeeRate >= 0 && this.cardFeeRate < 1)) {
       throw new Error("lob cardFeeRate must be in [0, 1)");
     }
+    this.sendDelayMinutes = opts.sendDelayMinutes ?? LOB_DEFAULT_SEND_DELAY_MINUTES;
+    // Lob allows send_date up to 180 days out.
+    if (!Number.isSafeInteger(this.sendDelayMinutes) || this.sendDelayMinutes < 0 || this.sendDelayMinutes > 180 * 24 * 60) {
+      throw new Error("LOB_SEND_DELAY_MINUTES must be an integer 0..259200");
+    }
+    this.allowUncheckedBalance = opts.allowUncheckedBalance === true;
     this.fetchImpl = opts.fetchImpl ?? ((input, init) => fetch(input, init));
+    this.now = opts.now ?? (() => new Date());
   }
 
   /** True for a `test_` key: free postcards that never print or mail. */
@@ -320,8 +346,13 @@ export class LobAdapter implements VendorAdapter {
         from = undefined;
       }
     }
+    await this.checkCredit(chargedCents);
+    const sendDate = this.sendDelayMinutes > 0
+      ? new Date(this.now().getTime() + this.sendDelayMinutes * 60_000).toISOString()
+      : undefined;
     const body = {
       description: metaValue(`ejb ${req.taskId}`).slice(0, 255),
+      ...(sendDate ? { send_date: sendDate } : {}),
       to,
       ...(from ? { from } : {}),
       front,
@@ -399,21 +430,30 @@ export class LobAdapter implements VendorAdapter {
     const since = Date.parse(sinceISO);
     if (!Number.isFinite(since)) throw new LobError("lob_bad_since");
     const out: Charge[] = [];
+    for (const p of await this.listPostcards(new Date(since))) {
+      if (p.deleted === true) continue;
+      const t = Date.parse(p.date_created ?? "");
+      const meta = Number(p.metadata?.[CENTS_METADATA_KEY]);
+      const amountCents = Number.isSafeInteger(meta) && meta > 0
+        ? meta
+        : this.costOf(p.size === "4x6" ? "4x6" : "6x9").totalCents; // a phantom trips STOP whatever its amount
+      out.push({ vendorChargeId: p.id, amountCents, at: new Date(t).toISOString(), vendorOrderId: p.id });
+    }
+    return out;
+  }
+
+  /** GET /postcards?date_created[gte]=since, every page (via next_url's `after` cursor). */
+  private async listPostcards(since: Date): Promise<LobPostcard[]> {
+    const out: LobPostcard[] = [];
     let after: string | undefined;
     for (let page = 0; page < 500; page++) {
-      const qs = new URLSearchParams({ limit: "100", "date_created[gte]": new Date(since).toISOString() });
+      const qs = new URLSearchParams({ limit: "100", "date_created[gte]": since.toISOString() });
       if (after) qs.set("after", after);
       const body = await this.call("GET", `/postcards?${qs}`) as { data?: LobPostcard[]; next_url?: string | null };
       for (const p of body.data ?? []) {
-        if (p.deleted === true) continue;
         const t = Date.parse(p.date_created ?? "");
         if (!Number.isFinite(t)) throw new LobError("lob_postcard_without_date_created");
-        if (t < since) continue;
-        const meta = Number(p.metadata?.[CENTS_METADATA_KEY]);
-        const amountCents = Number.isSafeInteger(meta) && meta > 0
-          ? meta
-          : this.costOf(p.size === "4x6" ? "4x6" : "6x9").totalCents; // a phantom trips STOP whatever its amount
-        out.push({ vendorChargeId: p.id, amountCents, at: new Date(t).toISOString(), vendorOrderId: p.id });
+        if (t >= since.getTime()) out.push(p);
       }
       if (!body.next_url) break;
       const next = new URL(body.next_url, this.baseUrl).searchParams.get("after");
@@ -421,6 +461,56 @@ export class LobAdapter implements VendorAdapter {
       after = next;
     }
     return out;
+  }
+
+  /**
+   * Lob Credits balance in cents (GET /accounts/credits_balance → `{balance}` in dollars; may be
+   * negative). The docs' path key is `/accounts` while their sample calls `/accounts/credits_balance`,
+   * so a 404 on the sample path falls back to `/accounts`.
+   */
+  async creditsBalanceCents(): Promise<number> {
+    let body: unknown;
+    try {
+      body = await this.call("GET", "/accounts/credits_balance");
+    } catch (e) {
+      if (!(e instanceof LobError && e.status === 404)) throw e;
+      body = await this.call("GET", "/accounts");
+    }
+    const b = (body as { balance?: unknown } | undefined)?.balance;
+    if (typeof b !== "number" || !Number.isFinite(b)) throw new LobError("lob_malformed_balance");
+    return Math.floor(b * 100 + 1e-6);
+  }
+
+  /**
+   * Our unsent postcards: created by this gate (metadata.ejb_cents) in the last 14 days, not
+   * deleted, with no tracking event yet. Conservative on purpose: a piece Lob already mailed but USPS
+   * hasn't scanned still counts, which only makes the credit check stricter.
+   */
+  async pendingCents(): Promise<number> {
+    let sum = 0;
+    for (const p of await this.listPostcards(new Date(this.now().getTime() - PENDING_LOOKBACK_MS))) {
+      if (p.deleted === true || (p.tracking_events ?? []).length > 0) continue;
+      const c = Number(p.metadata?.[CENTS_METADATA_KEY]);
+      if (Number.isSafeInteger(c) && c > 0) sum += c;
+    }
+    return sum;
+  }
+
+  /**
+   * Lob holds postcards when credits run out and mails the backlog on top-up, so "no credit" is not
+   * a refusal at Lob. Refuse here instead. Test keys make free postcards: no check.
+   */
+  private async checkCredit(pieceCents: number): Promise<void> {
+    if (this.isTest) return;
+    let balance: number, pending: number;
+    try {
+      balance = await this.creditsBalanceCents();
+      pending = await this.pendingCents();
+    } catch {
+      if (this.allowUncheckedBalance) return;
+      throw new GuardRefused("lob_balance_unavailable");
+    }
+    if (balance < pieceCents + pending) throw new GuardRefused("lob_insufficient_credit");
   }
 
   /** Local flag only. The real kill is disabling the live key at dashboard.lob.com (Settings → API Keys). */
@@ -463,7 +553,10 @@ export class LobAdapter implements VendorAdapter {
   }
 }
 
-/** Build from env: LOB_API_KEY, LOB_BASE_URL, LOB_POSTCARD_CENTS, LOB_POSTCARD_6X9_CENTS, LOB_CARD_FEE_RATE, OWNER_SHIP_TO_JSON. */
+/**
+ * Build from env: LOB_API_KEY, LOB_BASE_URL, LOB_POSTCARD_CENTS, LOB_POSTCARD_6X9_CENTS,
+ * LOB_CARD_FEE_RATE, LOB_SEND_DELAY_MINUTES, LOB_ALLOW_UNCHECKED_BALANCE, OWNER_SHIP_TO_JSON.
+ */
 export function lobFromEnv(env: (k: string) => string | undefined = (k) => Deno.env.get(k)): LobAdapter {
   const num = (k: string) => {
     const v = env(k);
@@ -476,5 +569,7 @@ export function lobFromEnv(env: (k: string) => string | undefined = (k) => Deno.
     postcard4x6Cents: num("LOB_POSTCARD_CENTS"),
     postcard6x9Cents: num("LOB_POSTCARD_6X9_CENTS"),
     cardFeeRate: num("LOB_CARD_FEE_RATE"),
+    sendDelayMinutes: num("LOB_SEND_DELAY_MINUTES"),
+    allowUncheckedBalance: env("LOB_ALLOW_UNCHECKED_BALANCE") === "1",
   });
 }

@@ -186,6 +186,8 @@ own ToS read, key, vendor-side cap and `reachFor`. PRs welcome.
 | `LOB_POSTCARD_CENTS` | optional 4x6 per-piece price, default `91` |
 | `LOB_POSTCARD_6X9_CENTS` | optional 6x9 per-piece price, default `103` |
 | `LOB_CARD_FEE_RATE` | optional, default `0.03` (Lob's card service fee); `0` if the account pays by ACH |
+| `LOB_SEND_DELAY_MINUTES` | optional, default `60`: every postcard's `send_date` is this far out, so `cancel()` has a window. `0` omits `send_date` |
+| `LOB_ALLOW_UNCHECKED_BALANCE` | optional; `1` lets `place()` proceed when the credits balance can't be read. Leave unset |
 | `OWNER_SHIP_TO_JSON` | the owner's address, shared with Zinc |
 
 Allow the host: `ops/install.sh --allow-net api.lob.com`.
@@ -204,8 +206,16 @@ delivery), so `shippingCents = 0`; Lob charges no sales tax on print or postage 
 - `place()`: `POST /postcards` with an `Idempotency-Key` header (the gate key; Lob returns the
   existing postcard for a repeat within 24 h), `use_type: "operational"` (Lob requires one; this is
   personal mail, not marketing), `mail_type: "usps_first_class"`, and metadata
-  `ejb_idempotency_key`, `ejb_cents`, `task_id`. `chargedCents` = the table cost, refused if over
-  the hard cap. Lob validation errors (`invalid_file_url`, `failed_deliverability_strictness`,
+  `ejb_idempotency_key`, `ejb_cents`, `task_id`, and `send_date` = now + `LOB_SEND_DELAY_MINUTES`.
+  `chargedCents` = the table cost, refused if over the hard cap. **Credit check first** (live keys;
+  test postcards are free): Lob does NOT refuse when its prepaid Lob Credits run out, it holds the
+  postcards and mails the whole backlog the moment credit is topped up. So `place()` reads the
+  balance (`GET /accounts/credits_balance`, docs "Get Lob Credits Balance", dollars, may be
+  negative; falls back to `/accounts` on a 404 since the docs list both paths) and refuses
+  `lob_insufficient_credit` unless balance ≥ this piece + every unsent piece of ours (gate-made
+  postcards from the last 14 days, not deleted, no tracking event yet; conservative). If the
+  balance can't be read it refuses `lob_balance_unavailable`, unless
+  `LOB_ALLOW_UNCHECKED_BALANCE=1`. Lob validation errors (`invalid_file_url`, `failed_deliverability_strictness`,
   `payment_method_unverified`, `rate_limit_exceeded`…) mean no postcard exists → `GuardRefused`
   → `failed`. 5xx, 408 and network errors stay `LobError` → `outcome_unknown`.
 - `status()`: deleted → `cancelled`; render `failed` → `failed`; a `Delivered` tracking event →
@@ -214,22 +224,27 @@ delivery), so `shippingCents = 0`; Lob charges no sales tax on print or postage 
   `raw.returned = true`, never `cancelled`: it was printed and mailed, so it is billed and keeps
   counting against the windows. Postcards have no carrier tracking number. **Test-mode postcards
   never get tracking events, so they stay `open`.**
-- `cancel()`: `DELETE /postcards/{id}`. Works only inside Lob's cancellation window (5 minutes by
-  default on new accounts) and then the postcard is not billed; after that `not_deletable` → `false`.
-  Longer windows and `send_date` scheduling are paid-edition features, so the adapter sets neither.
+- `cancel()`: `DELETE /postcards/{id}`. Works until the `send_date` (default 60 min after
+  placing; without one, Lob's default 5-minute cancellation window) and then the postcard is not
+  billed; after that `not_deletable` → `false`. **Caveat:** Lob's docs call scheduling
+  (`send_date`) a paid-edition feature. If the Developer plan rejects it, every `place()` fails
+  cleanly as `GuardRefused` (nothing created); then upgrade, or set `LOB_SEND_DELAY_MINUTES=0` and
+  live with the 5-minute window. The opt-in live test shows which.
 - `listCharges()`: `GET /postcards?date_created[gte]=…`, following `next_url`. One charge per
   postcard not deleted; amount = `metadata.ejb_cents`, else the table cost for its size. A postcard
   made by hand in the dashboard shows up here as a phantom charge and trips STOP.
 - `pause()` is a local flag. **The real kill is disabling the live key** in the Lob dashboard
   (Settings → API Keys).
 
-**Vendor-side caps.** None. Lob bills usage monthly in arrears (card +3% or ACH), has no per-key
-spend limit, and does not stop mail on overage. The gate's caps and the lob/month window are the
-only caps, so keep `vendor_month_cents` small for `lob`.
+**Vendor-side caps.** Lob has no per-key spend limit, and an empty Lob Credits balance holds mail
+rather than refusing it, so the balance is NOT a cap on its own; the adapter's credit check is what
+makes it one. Keep the credits small, and keep `vendor_month_cents` small for `lob`. Funding is
+card (+3% service fee) or ACH; usage is drawn from Lob Credits.
 
 1. Sign up at <https://dashboard.lob.com> on the free Developer plan. Add a billing address and a
    payment method (live requests fail with `billing_address_required` / `payment_method_unverified`
-   until you do). Optionally set the low-balance notification under billing.
+   until you do). Fund a small Lob Credits balance (e.g. $10), and set the low-credits
+   notification under billing.
 2. Live postcards need `use_type`; the adapter sends `operational`, so no account default is needed.
 3. Take the live secret key (`live_…`) under Settings → API Keys, name it `lob-<host>-<yyyy-mm>`
    (e.g. `lob-ejfvps-2026-10`; if the dashboard has no name field, record that name in your key
