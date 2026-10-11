@@ -5,11 +5,13 @@ surprise you.
 
 Your agents already know what you need: the resistor that ran out mid-build, the filter
 for the thing that beeps, the book you mentioned twice. errand-joy-bot lets them *ask
-for it* through a small private spending gate that you control. Cheap, boring things go
-through with a heads-up DM and a veto window. Bigger things wait for your tap. Anything
-that reaches another person always asks. And there is a little weekly **joy budget**:
-the robot may pick something it thinks you'd like, tell you only "robot spent $23 on
-something, tap to veto", and explain itself when the box arrives. The point is not
+for it* through a small private spending gate that you control. Small things (under $40)
+just happen, and you hear what and why when the box arrives. Cheap, boring things above
+that go through with a heads-up DM and a veto window. Bigger things wait for your tap,
+in a sealed DM that shows the amount and a hint, not the item. Anything that reaches
+another person always asks, in full. And there is a little weekly **joy budget**: the
+robot may pick something it thinks you'd like, say nothing, and explain itself when the
+box arrives. The point is not
 automation for its own sake. It is the small delight of an errand handled, and the
 occasional sealed envelope.
 
