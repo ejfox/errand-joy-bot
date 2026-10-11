@@ -1,0 +1,12 @@
+{
+  "_source": "Shape of Stannp US POST /v1/postcards/create with test=true (docs response example). All values are fake.",
+  "success": true,
+  "data": {
+    "pdf": "https://files.example/test-postcard-sample.pdf",
+    "id": 0,
+    "created": "2026-10-11T15:00:00+00:00",
+    "format": "4x6",
+    "cost": "0.80",
+    "status": "test"
+  }
+}

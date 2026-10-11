@@ -1,0 +1,9 @@
+{
+  "_source": "Lulu's documented error responses (OpenAPI components/responses and the status-endpoint 400 example). Values are fake.",
+  "bad_request": { "status": 400, "body": { "shipping_address": { "phone_number": ["This field is required."] } } },
+  "unauthorized": { "status": 401, "body": { "detail": "Authentication credentials were not provided." } },
+  "invalid_transition": { "status": 400, "body": ["Invalid transition from PRODUCTION_READY to CANCELED requested"] },
+  "server_error": { "status": 502, "body": { "detail": "Example: bad gateway" } },
+  "token_refused": { "status": 401, "body": { "error": "unauthorized_client", "error_description": "Example: invalid client credentials" } },
+  "status_canceled": { "status": 200, "body": { "changed": "2026-10-11T15:10:00.000000Z", "message": "Print-job was canceled", "name": "CANCELED" } }
+}
