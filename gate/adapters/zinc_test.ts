@@ -171,6 +171,13 @@ Deno.test("place: missing or incomplete owner address refuses before any network
   }
 });
 
+Deno.test("place: OWNER_SHIP_TO_JSON may be base64 (env files can't hold spaces or quotes)", async () => {
+  const { calls, fetchImpl } = stub([[isPost("/orders"), { status: 201, body: fx("order_pending.json") }]]);
+  const b64 = btoa(OWNER);
+  await adapter(fetchImpl, { ownerShipTo: b64 }).place(req(), quoteOf(1_000), 5_000, "k");
+  assertEquals((calls[0].body!.shipping_address as Record<string, string>).address_line1, "101 Example St");
+});
+
 Deno.test("place: a third-party shipTo, missing key, url/sku mismatch and pause all refuse offline", async () => {
   const { calls, fetchImpl } = stub([]);
   const third = { name: "A Friend", line1: "1 Elsewhere Rd", city: "Town", state: "CA", zip: "94105" };

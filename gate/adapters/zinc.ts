@@ -122,7 +122,10 @@ export function parseOwnerAddress(raw: string | ZincAddress | undefined): ZincAd
   let a: unknown = raw;
   if (typeof raw === "string") {
     try {
-      a = JSON.parse(raw);
+      // .env values can't hold spaces or quotes (ops/set-key.sh, systemd, docker --env-file), so the
+      // address may be given base64-encoded: `printf '%s' '{...}' | base64 | ops/set-key.sh OWNER_SHIP_TO_JSON`.
+      const s = raw.trim();
+      a = JSON.parse(s.startsWith("{") ? s : new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0))));
     } catch {
       throw new GuardRefused("zinc_owner_address_invalid_json");
     }

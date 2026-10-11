@@ -103,7 +103,7 @@ Paid from a prepaid Zinc wallet; no card on the request.
 | `ZINC_BASE_URL` | optional, default `https://api.zinc.com` (https only) |
 | `ZINC_RETAILER` | optional retailer slug for quotes, default `amazon` |
 | `ZINC_TAX_RATE` | optional tax buffer on the quote, default `0.10` (offers carry no tax) |
-| `OWNER_SHIP_TO_JSON` | the owner's address in Zinc's shape: `{"first_name","last_name","address_line1","address_line2","city","state","postal_code","phone_number","country":"US"}`. Private. `place()` refuses if it is missing or any required field is empty, the ZIP isn't 5 or 9 digits, or `state` isn't a 2-letter code |
+| `OWNER_SHIP_TO_JSON` | the owner's address in Zinc's shape: `{"first_name","last_name","address_line1","address_line2","city","state","postal_code","phone_number","country":"US"}`. Private. `place()` refuses if it is missing or any required field is empty, the ZIP isn't 5 or 9 digits, or `state` isn't a 2-letter code. Env files can't hold spaces or quotes, so store it base64-encoded: `printf '%s' '{"first_name":…}' \| base64 \| ops/set-key.sh OWNER_SHIP_TO_JSON` (raw JSON is accepted too) |
 
 Allow the host: `ops/install.sh --allow-net api.zinc.com`.
 
