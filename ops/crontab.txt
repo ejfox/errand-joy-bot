@@ -1,0 +1,21 @@
+# errand-joy-bot cron lines for the service user. Replace INSTALL_DIR with your install
+# path (e.g. /opt/errand-joy-bot), then merge by hand, backing up first:
+#   crontab -l > ~/crontab.bak-$(date +%Y%m%d) 2>/dev/null; crontab -e
+#
+# bin/buy reads GATE_ADMIN_TOKEN from INSTALL_DIR/.env itself and hands it to curl
+# through a file descriptor, so no token appears on a command line, in this file, or
+# in `ps`. flock stops overlapping runs (Linux: util-linux; macOS: `brew install flock`).
+#
+# 02:30 is in the machine's local time zone. Check `timedatectl`; on a UTC box,
+# 02:30 America/New_York is 06:30 UTC (EDT) / 07:30 UTC (EST).
+# Docker users: run the same lines on the host; bin/buy talks to the gate on loopback.
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+PG_ENV_FILE=INSTALL_DIR/.env
+
+# Every 2 min: retry DMs, advance windows, pull verdicts, place approved orders, poll, expire.
+*/2 * * * * flock -n /tmp/errand-joy-bot-tick.lock INSTALL_DIR/bin/buy tick >> INSTALL_DIR/data/cron.log 2>&1
+
+# Nightly: reconcile vendor charges against the ledger (a mismatch trips STOP).
+30 2 * * * flock -w 300 /tmp/errand-joy-bot-tick.lock INSTALL_DIR/bin/buy reconcile >> INSTALL_DIR/data/cron.log 2>&1

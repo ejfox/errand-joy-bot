@@ -1,0 +1,213 @@
+{
+  "tools": [
+    {
+      "name": "request_purchase",
+      "title": "Ask the owner's purchase gate to buy something",
+      "description": "Submit a purchase REQUEST to the owner's capped, ledgered purchase gate. This is the ONLY way to spend money:\nnever call vendor APIs or checkout pages directly, and never try to approve your own request.\n\nTiers are set by the vendor's QUOTED total (tax + shipping), not your estimate:\n  under $69.00: automatic. The owner is notified first and has a short window to cancel.\n  $69.00 to $500.00: the owner must tap Approve on a private link.\n  $500.01 to $1000.00: automatic only if the robot fund covers it (with a longer veto window).\n  over $1000.00: always refused.\nDaily, monthly and per-vendor caps apply; a request that would exceed one is denied.\n\nreach, declared honestly: 'self' = only affects the owner; 'world' = affects the public or shared spaces;\n'others' = reaches another person (a gift, something in a housemate's space). 'others' ALWAYS needs the owner's approval.\nThe vendor can raise reach but you can never lower it.\n\nbudget 'joy' = the owner's small weekly surprise budget. Joy must be reach 'self', must land in the automatic tier\n(never asks), and is a sealed envelope: never name joy picks in chat. For joy, `reason` is the why-note the owner reads on delivery.\n\nReturns the gate's row: a denial is a normal result with plain-English reasons, not an error.\nEvery request gets an idempotencyKey (auto-generated if missing); reuse the SAME key only to retry the SAME payload.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "vendor": {
+            "description": "Vendor id from the gate's allowlist (e.g. 'mock' in a test gate)",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "items": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sku": {
+                  "description": "Vendor SKU / product id",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "qty": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "title": {
+                  "description": "Human-readable product name",
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "url": {
+                  "description": "Product page URL",
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "maxUnitCents": {
+                  "description": "Refuse if the unit price is above this (cents)",
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "sku",
+                "qty"
+              ]
+            }
+          },
+          "reason": {
+            "description": "Why you want this, honestly and specifically. Shown to the owner. For joy: the why-note delivered with the item.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "reach": {
+            "description": "Who this affects. Pick truthfully; 'others' always asks.",
+            "type": "string",
+            "enum": [
+              "self",
+              "world",
+              "others"
+            ]
+          },
+          "maxTotalCents": {
+            "description": "Your ceiling in cents including tax and shipping. The gate refuses to place above it.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "budget": {
+            "description": "Default 'general'. 'joy' only for the weekly quiet-joy routine.",
+            "type": "string",
+            "enum": [
+              "general",
+              "joy"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "requester": {
+            "description": "Your agent name. Default 'claude-code'.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "taskId": {
+            "description": "What task this is for. Default: a generated id.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "idempotencyKey": {
+            "description": "Leave empty to auto-generate.",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:\\-]{1,128}$"
+          }
+        },
+        "required": [
+          "vendor",
+          "items",
+          "reason",
+          "reach",
+          "maxTotalCents"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "purchase_status",
+      "title": "Check one purchase request",
+      "description": "Get the current state of a request you submitted, with the gate's reasons in plain English. Joy requests stay sealed (items hidden).",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "description": "The `id` returned by request_purchase",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]{1,64}$"
+          }
+        },
+        "required": [
+          "requestId"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "list_purchases",
+      "title": "List purchase requests",
+      "description": "List requests in one state. With no state, lists everything still open (dm_pending, dm_delivered, pending_approval, approved, placing, placed, delivered). Joy requests stay sealed.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "state": {
+            "description": "One gate state; omit for all open requests",
+            "type": "string",
+            "enum": [
+              "received",
+              "quoted",
+              "decided",
+              "dm_pending",
+              "dm_delivered",
+              "pending_approval",
+              "approved",
+              "denied",
+              "expired",
+              "placing",
+              "placed",
+              "delivered",
+              "closed",
+              "cancelled",
+              "refunded",
+              "failed"
+            ]
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    },
+    {
+      "name": "budget",
+      "title": "Show spending windows and the robot fund",
+      "description": "Show how much of each spending window (day, month, joy week, per vendor) is used, and the robot fund balance. Check this before requesting so you don't ask for something a cap will deny.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "vendor": {
+            "description": "Also show this vendor's monthly cap",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,64}$"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "execution": {
+        "taskSupport": "forbidden"
+      }
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+# errand-joy-bot gate: capped spending gate for your agents. Private: loopback only.
+#
+# TEMPLATE. Do not copy this file by hand: `ops/install.sh` fills in every placeholder
+# (install dir, user, absolute deno path, network allowlist) and installs the result
+# as /etc/systemd/system/errand-joy-bot.service, backing up any previous unit first.
+[Unit]
+Description=errand-joy-bot gate (capped agent spending gate)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@INSTALL_DIR@
+# Secrets and runtime settings. NOTE: values in this file override Environment= lines,
+# so DRY_RUN is controlled ONLY by .env (default 1). Go live with:
+#   printf '0\n' | ops/set-key.sh DRY_RUN && sudo systemctl restart errand-joy-bot
+EnvironmentFile=@INSTALL_DIR@/.env
+# Module cache filled by install.sh (`deno cache` with the same DENO_DIR); the service
+# runs --cached-only so it never fetches code at runtime.
+Environment=DENO_DIR=@INSTALL_DIR@/.deno-cache
+Environment=NO_COLOR=1
+
+# Network allowlist, computed by install.sh from .env:
+#   GATE_HOST:GATE_PORT (bind), NOTIFY_DM_URL host, RELAY_URL host,
+#   plus any vendor API hosts passed as `install.sh --allow-net host1,host2`.
+# Adding a vendor host here is a deliberate, reviewed change (docs/vendors.md).
+# --allow-run is set only when HEALTH_ALERT_CMD is configured; otherwise --deny-run.
+ExecStart=@DENO@ run \
+  --cached-only --no-prompt \
+  --allow-net=@ALLOW_NET@ \
+  --allow-read=@ALLOW_READ@ \
+  --allow-write=@DATA_DIR@ \
+  --allow-env \
+  @RUN_FLAG@ \
+  gate/main.ts
+
+Restart=on-failure
+RestartSec=5
+# Logs go to the journal: `journalctl -u errand-joy-bot -f`
+
+# ── hardening ──────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+# Read-only, not tmpfs: deno may live in ~/.deno/bin and the install dir may be in $HOME.
+ProtectHome=read-only
+ReadWritePaths=@READ_WRITE_PATHS@
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+# NOT set: MemoryDenyWriteExecute (breaks V8's JIT).
+
+[Install]
+WantedBy=multi-user.target

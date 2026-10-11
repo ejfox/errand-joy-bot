@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gate": {
+      "command": "bash",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/run.sh"],
+      "env": {
+        "EJB_GATE_URL": "${user_config.gate_url}",
+        "EJB_AGENT_TOKEN": "${user_config.agent_token}"
+      }
+    }
+  }
+}

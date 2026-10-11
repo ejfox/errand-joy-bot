@@ -1,0 +1,19 @@
+{
+  "description": "errand-joy-bot seatbelt: block agent attempts to approve, unstop, fund, mint keys, read the gate's .env, call the gate's /internal/ routes, or touch a relay approval link. The real boundary is structural (agents never hold the admin token or vendor keys); this only catches mistakes early.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno",
+            "args": ["run", "--quiet", "--no-prompt", "--no-config", "--no-lock", "${CLAUDE_PLUGIN_ROOT}/hooks/guard.ts"],
+            "timeout": 10,
+            "statusMessage": "errand-joy-bot guard"
+          }
+        ]
+      }
+    ]
+  }
+}

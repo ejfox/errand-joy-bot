@@ -1,0 +1,21 @@
+# secrets: every .env variant except the template (incl. .env.bak-*)
+.env
+.env.*
+!.env.example
+backups/
+
+# runtime state
+data/
+relay/data/
+*.db
+*.db-*
+STOP
+
+# your policy (examples/config.example.toml is the tracked template)
+config.toml
+
+# caches and local-only files
+.deno-cache/
+overlays/
+local/
+.DS_Store

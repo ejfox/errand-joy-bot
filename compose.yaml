@@ -1,0 +1,32 @@
+# errand-joy-bot gate in Docker (Linux hosts).
+#
+#   cp .env.example .env && chmod 600 .env       # then fill it (ops/set-key.sh)
+#   cp examples/config.example.toml config.toml  # read every comment
+#   mkdir -p data && sudo chown 1993:1993 data   # the image's `deno` user
+#   docker compose up -d --build
+#   bin/buy health                               # from the host
+#
+# network_mode: host keeps the gate on the HOST's loopback (127.0.0.1:47400), so bin/buy
+# and cron on the host reach it and nothing else can. Do NOT switch to `ports:`; a
+# published port would expose the gate. Host networking is Linux-only; on macOS run the
+# gate with ops/install.sh instead.
+#
+# Vendor API hosts for Deno's --allow-net go in EXTRA_ALLOW_NET (comma-separated).
+# The relay is NOT in this file; deploy it separately (ops/relay-deploy.md).
+services:
+  gate:
+    build: .
+    network_mode: host
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      CONFIG_PATH: /app/config.toml
+      # EXTRA_ALLOW_NET: api.vendor.example
+    volumes:
+      - ./data:/app/data
+      - ./config.toml:/app/config.toml:ro
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

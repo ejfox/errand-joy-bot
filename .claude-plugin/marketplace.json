@@ -1,0 +1,12 @@
+{
+  "name": "errand-joy-bot",
+  "description": "A capped, ledgered purchase gate for Claude Code agents.",
+  "owner": { "name": "errand-joy-bot contributors" },
+  "plugins": [
+    {
+      "name": "errand-joy-bot",
+      "source": "./plugin",
+      "description": "Agents request purchases; a self-hosted gate enforces tiers, caps and a weekly joy budget; only the owner approves."
+    }
+  ]
+}

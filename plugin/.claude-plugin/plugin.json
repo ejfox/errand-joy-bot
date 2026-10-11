@@ -1,0 +1,44 @@
+{
+  "name": "errand-joy-bot",
+  "displayName": "Errand Joy Bot",
+  "version": "0.1.0",
+  "description": "Give Claude Code a capped, ledgered way to ask for purchases. Agents request; a self-hosted gate enforces tiers, caps and a weekly joy budget; only the owner approves, from a private one-tap link.",
+  "author": { "name": "errand-joy-bot contributors" },
+  "license": "MIT",
+  "keywords": ["purchasing", "budget", "approval", "mcp", "safety"],
+  "userConfig": {
+    "gate_url": {
+      "type": "string",
+      "title": "Gate URL",
+      "description": "Where your purchase gate listens. It binds to loopback only, so use http://127.0.0.1:47400 on the gate host. From another machine, forward a local port over SSH (ssh -L 47400:127.0.0.1:47400 gatehost); never publish the gate.",
+      "default": "http://127.0.0.1:47400"
+    },
+    "agent_token": {
+      "type": "string",
+      "title": "Gate agent token (request-only)",
+      "description": "GATE_AGENT_TOKEN from the gate's .env. It can only submit requests and read status. Never enter the admin token or any vendor key here.",
+      "sensitive": true
+    },
+    "joy_todo_path": {
+      "type": "file",
+      "title": "Joy: owner's to-do list (optional)",
+      "description": "A text or markdown file the quiet-joy routine may read to find small frictions worth fixing."
+    },
+    "joy_notes_dir": {
+      "type": "directory",
+      "title": "Joy: owner's notes folder (optional)",
+      "description": "A folder of notes the quiet-joy routine may skim for recent interests and wishes."
+    },
+    "joy_owned_items_path": {
+      "type": "file",
+      "title": "Joy: owned-items list (optional)",
+      "description": "A file listing things the owner already has, so joy never buys duplicates."
+    },
+    "joy_household_ok": {
+      "type": "boolean",
+      "title": "Joy: allow shared household spaces",
+      "description": "Off by default: joy picks are for the owner's own use and space only. Turn on to allow small things for shared spaces (still never for another person's own space).",
+      "default": false
+    }
+  }
+}

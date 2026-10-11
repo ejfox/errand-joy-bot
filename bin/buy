@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# buy: CLI for the errand-joy-bot gate (curl + jq). Talks to the private gate on loopback.
+#
+# Agent commands (GATE_AGENT_TOKEN):
+#   buy request FILE.json|-        submit a PurchaseRequest (JSON), prints the request row
+#   buy status ID                  one request
+#   buy list [STATE]               requests, optionally filtered by state
+#   buy cancel ID                  cancel a request still in its window
+#   buy budgets                    window usage vs caps
+#   buy fund                       robot-fund balance + entries
+# Admin commands (GATE_ADMIN_TOKEN):
+#   buy fund-add CENTS [KIND] NOTE add a fund entry; KIND = topup|income|refund (default topup)
+#   buy stop [REASON]              set STOP (falls back to touching the STOP file if the gate is down)
+#   buy unstop                     clear STOP (the STOP file, if present, is yours to rm)
+#   buy rate ID 1-5                rate a delivered purchase
+#   buy tick                       run one scheduler tick (cron does this every 2 min)
+#   buy reconcile                  run the nightly vendor-charge reconcile now
+#   buy health                     GET /health (no token)
+#
+# Tokens come from the environment, else from the .env file (PG_ENV_FILE, default
+# <repo>/.env next to this script). They are handed to curl through a file descriptor,
+# never argv, and never printed. Base URL: PG_URL (default http://GATE_HOST:GATE_PORT,
+# i.e. http://127.0.0.1:47400).
+set -euo pipefail
+set +x
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+die() { echo "buy: $*" >&2; exit 1; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+# Read NAME from the .env without sourcing it (no code execution, no export).
+env_from_file() {
+  local name="$1" f line
+  for f in "${PG_ENV_FILE:-}" "$REPO/.env"; do
+    [[ -n "$f" && -r "$f" ]] || continue
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line#export }"
+      if [[ "$line" == "$name="* ]]; then
+        line="${line#"$name"=}"; line="${line%\"}"; line="${line#\"}"
+        printf '%s' "$line"; return 0
+      fi
+    done < "$f"
+  done
+  return 1
+}
+
+token() {
+  local name="$1" v="${!1:-}"
+  [[ -n "$v" ]] || v="$(env_from_file "$name" || true)"
+  [[ -n "$v" ]] || die "$name not set (env or .env)"
+  printf '%s' "$v"
+}
+
+cfg() {  # NAME DEFAULT: env, else .env, else default
+  local v="${!1:-}"
+  [[ -n "$v" ]] || v="$(env_from_file "$1" || true)"
+  printf '%s' "${v:-$2}"
+}
+
+GATE_HOST_V="$(cfg GATE_HOST 127.0.0.1)"
+[[ "$GATE_HOST_V" == *:* && "$GATE_HOST_V" != \[* ]] && GATE_HOST_V="[$GATE_HOST_V]"
+BASE="${PG_URL:-http://$GATE_HOST_V:$(cfg GATE_PORT 47400)}"
+
+data_dir() {  # relative DATA_DIR resolves against the repo (the service's WorkingDirectory)
+  local d; d="$(cfg DATA_DIR ./data)"
+  case "$d" in /*) printf '%s' "$d" ;; *) printf '%s/%s' "$REPO" "${d#./}" ;; esac
+}
+
+pretty() { if command -v jq >/dev/null; then jq .; else cat; echo; fi; }
+
+# api METHOD PATH TOKEN_NAME [curl args...]
+api() {
+  local method="$1" path="$2" tname="$3"; shift 3
+  local tok; tok="$(token "$tname")"
+  # header goes in through process substitution (/dev/fd/N), so it never hits argv
+  curl -sS --fail-with-body --max-time 30 -X "$method" \
+    -H @<(printf 'Authorization: Bearer %s\n' "$tok") \
+    -H 'Content-Type: application/json' \
+    "$@" "$BASE$path" | pretty
+}
+
+cmd="${1:-}"; [[ $# -gt 0 ]] && shift
+case "$cmd" in
+  request)
+    src="${1:--}"
+    if [[ "$src" == "-" ]]; then body="$(cat)"; else [[ -r "$src" ]] || die "cannot read $src"; body="$(cat "$src")"; fi
+    jq -e 'type == "object" and has("idempotencyKey") and has("vendor") and has("items")' >/dev/null <<<"$body" \
+      || die "request JSON must be an object with idempotencyKey, vendor, items (see types.ts PurchaseRequest)"
+    api POST /api/requests GATE_AGENT_TOKEN --data-binary @- <<<"$body"
+    ;;
+  status)
+    [[ $# -eq 1 ]] || die "usage: buy status ID"
+    api GET "/api/requests/$(jq -rn --arg v "$1" '$v|@uri')" GATE_AGENT_TOKEN
+    ;;
+  list)
+    q=""; [[ $# -ge 1 ]] && q="?state=$(jq -rn --arg v "$1" '$v|@uri')"
+    api GET "/api/requests$q" GATE_AGENT_TOKEN
+    ;;
+  cancel)
+    [[ $# -eq 1 ]] || die "usage: buy cancel ID"
+    api POST "/api/requests/$(jq -rn --arg v "$1" '$v|@uri')/cancel" GATE_AGENT_TOKEN
+    ;;
+  budgets) api GET /api/budgets GATE_AGENT_TOKEN ;;
+  fund)    api GET /api/fund GATE_AGENT_TOKEN ;;
+  fund-add)
+    [[ $# -ge 2 ]] || die "usage: buy fund-add CENTS [topup|income|refund] NOTE"
+    cents="$1"; shift
+    [[ "$cents" =~ ^[1-9][0-9]*$ ]] || die "CENTS must be a positive integer (2500 = \$25.00)"
+    kind="topup"
+    case "${1:-}" in topup|income|refund) kind="$1"; shift ;; esac
+    [[ $# -ge 1 ]] || die "a NOTE is required (where the money came from)"
+    note="$*"
+    printf 'adding %s fund entry of $%d.%02d\n' "$kind" $((cents / 100)) $((cents % 100)) >&2
+    jq -n --argjson cents "$cents" --arg kind "$kind" --arg note "$note" \
+      '{cents: $cents, kind: $kind, note: $note}' \
+      | api POST /internal/fund/entries GATE_ADMIN_TOKEN --data-binary @-
+    ;;
+  stop)
+    reason="${*:-manual stop via buy}"
+    if jq -n --arg r "$reason" '{reason: $r}' | api POST /internal/stop GATE_ADMIN_TOKEN --data-binary @-; then
+      echo "STOP set via gate" >&2
+    else
+      dd="$(data_dir)"
+      if [[ -d "$dd" && -w "$dd" ]]; then
+        printf '%s %s\n' "$(date -u +%FT%TZ)" "$reason" > "$dd/STOP"
+        echo "gate unreachable; wrote STOP file $dd/STOP (gate checks it on every step)" >&2
+      else
+        die "gate unreachable AND cannot write $dd/STOP. Do it by hand: touch $dd/STOP"
+      fi
+    fi
+    ;;
+  unstop)
+    api DELETE /internal/stop GATE_ADMIN_TOKEN
+    dd="$(data_dir)"
+    [[ -e "$dd/STOP" ]] && echo "note: STOP file still exists at $dd/STOP; rm it deliberately if you mean it" >&2
+    true
+    ;;
+  rate)
+    [[ $# -eq 2 && "$2" =~ ^[1-5]$ ]] || die "usage: buy rate ID 1-5"
+    jq -n --argjson rating "$2" '{rating: $rating}' \
+      | api POST "/internal/rate/$(jq -rn --arg v "$1" '$v|@uri')" GATE_ADMIN_TOKEN --data-binary @-
+    ;;
+  tick)      api POST /internal/tick GATE_ADMIN_TOKEN ;;
+  reconcile) api POST /internal/reconcile GATE_ADMIN_TOKEN ;;
+  health)    curl -sS --fail-with-body --max-time 10 "$BASE/health" | pretty ;;
+  ""|-h|--help|help) usage 0 ;;
+  *) echo "buy: unknown command '$cmd'" >&2; usage 2 ;;
+esac

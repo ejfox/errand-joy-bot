@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+backups/
+data/
+relay/
+*.db
+*.db-*
+STOP
+config.toml
+.deno-cache/
+overlays/
+local/
+plugin/

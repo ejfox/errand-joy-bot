@@ -1,0 +1,113 @@
+# errand-joy-bot policy. Copy to config.toml (gitignored) and point CONFIG_PATH at it.
+#
+# Policy is CODE-ENFORCED: the gate reads this file at startup, and agents can never
+# see or change it. Restart the gate after editing.
+#
+# Every amount is in integer CENTS ($25.00 = 2500), tax and shipping included.
+# Tiers are computed on the vendor's QUOTED total, never on the agent's estimate.
+#
+# These numbers are the maintainer's own working setup (auto under $69, $100/day,
+# $250/month). They are NOT a recommendation. If you are unsure, LOWER them before your
+# first live run (e.g. auto under $20, $75/day, $150/month, fund off), watch a few weeks
+# of DMs, then loosen one number at a time.
+#
+# The numbers below are also the code's HARD CEILINGS: this file can make policy
+# stricter, never looser. Unknown keys are errors (a typo never silently loosens policy).
+# Every key is optional; a missing key uses the value shown.
+
+# Optional. Must be true to raise any number past its built-in ceiling, e.g. a refuse
+# threshold (tiers.fund_max_cents) above $1,000. Absolute limits still apply.
+# Leave it false unless you have read docs/threat-model.md.
+# i_understand_the_risk = false
+
+# Optional. Requests whose `reason` is shorter than this get HTTP 400, so agents must
+# explain themselves. Lowering it below 20 needs i_understand_the_risk.
+# min_reason_chars = 60
+
+# Optional. Request categories whose effects reach the world, not just you; they get
+# reach "world" at minimum.
+# world_categories = ["tree", "telescope"]
+
+# IANA time zone used for quiet hours and for the calendar day / ISO week / month
+# windows the caps are measured in.
+timezone = "America/New_York"
+
+# Closed allowlist of vendor adapters the gate will use. A vendor not listed here
+# (or not registered in gate/adapters/registry.ts) is always denied.
+# "mock" moves no money: it is a deterministic fake vendor for trying the whole flow.
+vendors = ["mock"]
+
+# The label an agent uses for "ship to the owner's own address" (shipTo field).
+# Any other shipTo means the purchase reaches someone else, so its reach is "others"
+# and it always asks. The real address lives with the vendor account, never here.
+owner_home_label = "owner-home"
+# (Agents may send either this label or the literal "owner-home"; anything else, such as
+# an address object, is treated as someone else's address.)
+
+[tiers]
+# Quoted total BELOW this: "auto". The owner gets a DM with a veto link first, then a
+# cancel window (windows.auto_cancel_minutes), then the order is placed.
+auto_max_cents = 6900
+# From auto_max_cents up to and including this: "ask". Nothing happens until the owner
+# taps Approve, and the link expires after windows.approval_ttl_hours.
+ask_max_cents = 50000
+# The "fund" tier (above ask_max_cents, up to fund_max_cents) is automatic ONLY when the
+# robot fund covers the whole quoted total. It is paid from the fund, skips the rolling
+# caps, and has a veto window (windows.fund_veto_minutes). Reach "others" still asks.
+# The fund starts at $0, so this tier is INERT until you top it up with
+# `bin/buy fund-add`. Set false to refuse everything above ask_max_cents.
+fund_enabled = true
+# Upper bound of the fund tier. Above this every request is refused outright.
+fund_max_cents = 100000
+
+[caps]
+# Rolling spend caps. They are ABSOLUTE for auto and ask purchases: a request that would
+# push ANY window over its cap is denied, and not even the owner's approval overrides
+# that. In-flight (pending) money counts against the cap. Ask DMs show the remaining
+# headroom. Fund-tier purchases are exempt (they are paid from the fund).
+#
+# So the effective ask ceiling is min(tiers.ask_max_cents, day_cents, vendor_month_cents).
+# The gate REFUSES to start when day_cents < tiers.auto_max_cents, and otherwise logs an
+# INFO line at startup; with these numbers:
+#   effective ask ceiling = $100.00 (limited by caps.day_cents)
+# Calendar day in `timezone`.
+day_cents = 10000
+# Calendar month, all non-fund spend (joy spend counts inside this).
+month_cents = 25000
+# Per-vendor monthly cap, applied to every vendor in `vendors`.
+vendor_month_cents = 10000
+
+[joy]
+# The joy budget: small surprises the robot picks for you. Auto-tier only and reach
+# "self" only (it can never buy for or reach other people). The pre-order DM is a
+# sealed envelope ("robot spent $23 on something, tap to veto") and the why-note
+# arrives on delivery. Set enabled = false to turn it off.
+enabled = true
+# ISO-week cap. Joy spend ALSO counts against caps.day_cents and caps.month_cents
+# (it lives inside the monthly cap, it is not extra money).
+week_cents = 4000
+
+[quiet_hours]
+# DMs are queued (not sent) between start and end, in `timezone`. Because nothing is
+# placed before its DM is delivered, purchases also wait. Same start and end = off.
+start = "22:00"
+end = "07:30"
+
+[velocity]
+# More than this many requests in 10 minutes trips the kill switch (STOP).
+# Guards against a looping or prompt-injected agent.
+max_requests_per_10m = 5
+
+[windows]
+# Auto tier: minutes between the delivered DM and placing the order (veto window).
+auto_cancel_minutes = 10
+# Fund tier: minutes between the delivered DM and placing the order (veto window).
+fund_veto_minutes = 120
+# Ask tier: hours an Approve link stays valid. Unanswered requests expire (denied).
+# 24 is the maximum, even with i_understand_the_risk.
+approval_ttl_hours = 24
+
+# Optional. Settings for the "mock" vendor only (no money moves).
+# [mock]
+# Sales tax applied to the mock subtotal, as a fraction in [0, 1).
+# tax_rate = 0.08
