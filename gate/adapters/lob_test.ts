@@ -245,6 +245,60 @@ Deno.test("guarded: DRY_RUN refuses the live adapter before Lob is called; regis
   assertEquals(calls.length, 0);
 });
 
+// ── credit check + send_date (live keys) ───────────────────────────────────
+const NOW = new Date("2026-10-11T18:00:00.000Z");
+const listRoutes = (): [(c: Call) => boolean, Reply][] => [
+  [(c) => c.method === "GET" && c.url.includes("after=fakecursor1"), { status: 200, body: fx("postcards_list_page2.json") }],
+  [isGet("/postcards?"), { status: 200, body: fx("postcards_list.json") }],
+];
+const live = (fetchImpl: typeof fetch, extra: Partial<LobAdapterOptions> = {}) => adapter(fetchImpl, { apiKey: "live_fakekey", now: () => NOW, ...extra });
+
+Deno.test("place (live key): balance must cover this piece + our unsent pieces; send_date 60 min out", async () => {
+  // Our unsent pieces in the fixtures: 94 + 107 = 201 (deleted and non-ejb postcards don't count).
+  const ok = stub([[isGet("/accounts/credits_balance"), { status: 200, body: { balance: 2.95 } }], ...listRoutes(), [isPost("/postcards"), { status: 200, body: fx("postcard_created.json") }]]);
+  const a = live(ok.fetchImpl);
+  assertEquals(await a.pendingCents(), 201);
+  await a.place(req(), quoteOf(94), 500, "k"); // 295 ≤ 295
+  const post = ok.calls.find((c) => c.method === "POST")!;
+  assertEquals(post.body!.send_date, "2026-10-11T19:00:00.000Z");
+  assert(ok.calls.findIndex((c) => c.method === "POST") > ok.calls.findIndex((c) => c.url.includes("credits_balance")));
+  assert(ok.calls.some((c) => c.url.includes("date_created%5Bgte%5D=2026-09-27T18%3A00%3A00.000Z")));
+
+  const short = stub([[isGet("/accounts/credits_balance"), { status: 200, body: { balance: 2.94 } }], ...listRoutes()]);
+  const e = await assertRejects(() => live(short.fetchImpl).place(req(), quoteOf(94), 500, "k"), GuardRefused);
+  assertEquals(e.code, "lob_insufficient_credit");
+  assert(!short.calls.some((c) => c.method === "POST"));
+  const neg = stub([[isGet("/accounts/credits_balance"), { status: 200, body: { balance: -1234.56 } }], ...listRoutes()]);
+  assertEquals((await assertRejects(() => live(neg.fetchImpl).place(req(), quoteOf(94), 500, "k"), GuardRefused)).code, "lob_insufficient_credit");
+});
+
+Deno.test("place (live key): balance from the fixture; /accounts fallback when the sample path 404s", async () => {
+  const s = stub([[(c) => c.method === "GET" && c.url.endsWith("/v1/accounts"), { status: 200, body: fx("credits_balance.json") }]]);
+  assertEquals(await live(s.fetchImpl).creditsBalanceCents(), 300);
+  assertEquals(s.calls.map((c) => c.url), ["https://lob.example/v1/accounts/credits_balance", "https://lob.example/v1/accounts"]);
+});
+
+Deno.test("place (live key): unreadable balance refuses unless LOB_ALLOW_UNCHECKED_BALANCE=1", async () => {
+  const down = () => stub([[isGet("/accounts"), ERR.server_error], [isPost("/postcards"), { status: 200, body: fx("postcard_created.json") }]]);
+  const d1 = down();
+  const e = await assertRejects(() => live(d1.fetchImpl).place(req(), quoteOf(94), 500, "k"), GuardRefused);
+  assertEquals(e.code, "lob_balance_unavailable");
+  assert(!d1.calls.some((c) => c.method === "POST"));
+  const d2 = down();
+  const env = (k: string) => ({ LOB_API_KEY: "live_fakekey", LOB_ALLOW_UNCHECKED_BALANCE: "1" } as Record<string, string>)[k];
+  assert(lobFromEnv(env).allowUncheckedBalance);
+  const o = await live(d2.fetchImpl, { allowUncheckedBalance: true }).place(req(), quoteOf(94), 500, "k");
+  assertEquals(o.vendorOrderId, "psc_fake0000000001");
+});
+
+Deno.test("place: test keys skip the credit check (free); LOB_SEND_DELAY_MINUTES=0 omits send_date", async () => {
+  const { calls, fetchImpl } = stub([[isPost("/postcards"), { status: 200, body: fx("postcard_created.json") }]]);
+  await adapter(fetchImpl, { sendDelayMinutes: 0 }).place(req(), quoteOf(94), 500, "k");
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].body!.send_date, undefined);
+  assertThrows(() => lobFromEnv((k) => ({ LOB_SEND_DELAY_MINUTES: "-5" } as Record<string, string>)[k]));
+});
+
 // ── status / cancel ────────────────────────────────────────────────────────
 Deno.test("status: tracking events map to open / shipped / delivered; returned stays billed (shipped)", async () => {
   const ev = (...names: string[]) => names.map((name) => ({ name }));
