@@ -1,0 +1,47 @@
+{
+  "direct_upload": {
+    "success": true,
+    "message": "test presigned url (shape: POST /files/direct-upload)",
+    "data": {
+      "presignedUrl": "https://example-bucket.s3.us-west-2.amazonaws.com/test-upload-key?X-Amz-Signature=example",
+      "key": "test-upload-key",
+      "filePlaceholder": {
+        "publicFileServiceId": "test-file-0001",
+        "name": "example-box-base.stl",
+        "ownerId": "errand-joy-bot",
+        "platformId": "test-platform-0001",
+        "type": "stl"
+      }
+    }
+  },
+  "confirm_upload": {
+    "success": true,
+    "message": "test confirmed file (shape: POST /files/confirm-upload, openapi File)",
+    "data": {
+      "publicFileServiceId": "test-file-0001",
+      "name": "example-box-base.stl",
+      "ownerId": "errand-joy-bot",
+      "platformId": "test-platform-0001",
+      "type": "stl",
+      "notes": null,
+      "createdAt": "2026-10-11T12:00:00.000Z",
+      "updatedAt": "2026-10-11T12:00:00.000Z",
+      "fileURL": "https://example-bucket.s3.us-west-2.amazonaws.com/test-file-0001",
+      "metrics": { "bodyCount": 1, "printTimeEstimate": 95, "weight": 18.2, "volume": 14.6, "x": 64, "y": 44, "z": 27, "supportRequired": false }
+    }
+  },
+  "estimate": {
+    "success": true,
+    "message": "test estimate (shape: POST /files/{id}/estimate)",
+    "data": {
+      "subtotal": 4.06,
+      "total": 4.06,
+      "pricePerUnit": 4.06,
+      "quantity": 1,
+      "totalMaterial": 18.2,
+      "estimatedPrintTime": 95,
+      "bodyChargeCost": 0,
+      "oversizeSurcharge": 0
+    }
+  }
+}

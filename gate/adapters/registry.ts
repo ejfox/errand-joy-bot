@@ -9,6 +9,7 @@ import { treeNationFromEnv } from "./treenation.ts";
 import { zincFromEnv } from "./zinc.ts";
 import { stannpFromEnv } from "./stannp.ts";
 import { luluFromEnv } from "./lulu.ts";
+import { slant3dFromEnv } from "./slant3d.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
 //   mouser / craftcloud / pcbway          self when shipTo is owner-home, otherwise others
@@ -118,6 +119,7 @@ export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => V
   skyfi: () => skyFiFromEnv(),
   stannp: () => stannpFromEnv(),
   lulu: () => luluFromEnv(),
+  slant3d: () => slant3dFromEnv(),
 };
 
 export function knownVendors(): string[] {

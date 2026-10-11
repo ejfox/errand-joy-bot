@@ -1,0 +1,98 @@
+{
+  "draft": {
+    "success": true,
+    "message": "Order Drafted: To Submit Order with payment: POST to orders/:publicOrderId",
+    "data": {
+      "order": {
+        "publicId": "test-order-0001",
+        "status": "DRAFT",
+        "paymentId": null,
+        "options": { "shippingProvider": "SHIPPO" },
+        "printingCost": "4.06",
+        "deliveryCost": "4.79",
+        "arriveByDate": null,
+        "processedAt": null,
+        "createdAt": "2026-10-11T12:01:00.000Z",
+        "updatedAt": "2026-10-11T12:01:00.000Z"
+      },
+      "items": [
+        { "type": "PRINT", "quantity": 1, "price": "4.06", "currency": "USD", "status": "PROCESSING", "publicFileServiceId": "test-file-0001", "filamentId": "test-filament-pla-black", "name": "example-box-base.stl" }
+      ],
+      "totals": { "printingCost": 4.06, "deliveryCost": 4.79, "totalCost": 8.85 }
+    }
+  },
+  "get_draft": {
+    "success": true,
+    "message": "test order (shape: GET /orders/{id}, data.order)",
+    "data": {
+      "order": {
+        "publicId": "test-order-0001",
+        "status": "DRAFT",
+        "platformId": "test-platform-0001",
+        "paymentId": null,
+        "processedAt": null,
+        "printingCost": "4.06",
+        "deliveryCost": "4.79",
+        "fulfillment": null,
+        "items": [
+          { "type": "PRINT", "quantity": 1, "price": "4.06", "currency": "USD", "status": "PROCESSING", "publicFileServiceId": "test-file-0001", "filamentId": "test-filament-pla-black" }
+        ],
+        "createdAt": "2026-10-11T12:01:00.000Z",
+        "updatedAt": "2026-10-11T12:01:00.000Z"
+      }
+    }
+  },
+  "process": {
+    "success": true,
+    "message": "Order Successfully Processed for billing",
+    "data": {
+      "publicId": "test-order-0001",
+      "createdAt": "2026-10-11T12:01:00.000Z",
+      "updatedAt": "2026-10-11T12:05:00.000Z",
+      "processedAt": "2026-10-11T12:05:00.000Z",
+      "arriveByDate": null,
+      "deliveryCost": "4.79",
+      "printingCost": "4.06",
+      "status": "PAID",
+      "paymentId": "test-payment-0001",
+      "options": { "shippingProvider": "SHIPPO" }
+    }
+  },
+  "get_shipped": {
+    "success": true,
+    "message": "test order (shape: GET /orders/{id}, data.order)",
+    "data": {
+      "order": {
+        "publicId": "test-order-0001",
+        "status": "SHIPPED",
+        "paymentId": "test-payment-0001",
+        "processedAt": "2026-10-11T12:05:00.000Z",
+        "printingCost": "4.06",
+        "deliveryCost": "4.79",
+        "fulfillment": { "tracking_number": "test-tracking-0001", "shipment_status": "SHIPPED" },
+        "items": [],
+        "createdAt": "2026-10-11T12:01:00.000Z",
+        "updatedAt": "2026-10-13T09:00:00.000Z"
+      }
+    }
+  },
+  "cancel": { "success": true, "message": "test: order cancelled" },
+  "list": {
+    "success": true,
+    "message": "test orders (shape: GET /orders, data[] of Order + Pagination)",
+    "data": [
+      { "publicId": "test-order-0001", "status": "PRINTING", "paymentId": "test-payment-0001", "processedAt": "2026-10-11T12:05:00.000Z", "printingCost": "4.06", "deliveryCost": "4.79", "createdAt": "2026-10-11T12:01:00.000Z" },
+      { "publicId": "test-order-0002", "status": "DRAFT", "paymentId": null, "processedAt": null, "printingCost": "9.10", "deliveryCost": "5.00", "createdAt": "2026-10-11T12:02:00.000Z" },
+      { "publicId": "test-order-0003", "status": "CANCELED", "paymentId": "test-payment-0003", "processedAt": "2026-10-11T13:00:00.000Z", "printingCost": "12.00", "deliveryCost": "5.00", "createdAt": "2026-10-11T12:59:00.000Z" },
+      { "publicId": "test-order-0004", "status": "DELIVERED", "paymentId": null, "processedAt": "2026-10-09T08:00:00.000Z", "printingCost": "35.53", "deliveryCost": "4.79", "createdAt": "2026-10-09T07:00:00.000Z" },
+      { "publicId": "test-order-0005", "status": "PAYMENT_ERROR", "paymentId": null, "processedAt": "2026-10-11T14:00:00.000Z", "printingCost": "3.00", "deliveryCost": "4.00", "createdAt": "2026-10-11T13:59:00.000Z" }
+    ],
+    "count": 5,
+    "pagination": { "count": 5, "totalPages": 1, "page": 1, "limit": 100 }
+  },
+  "errors": {
+    "not_found": { "success": false, "message": "Order not found", "error": "test: no order with that id" },
+    "unauthorized": { "success": false, "message": "Order belongs to another creator", "error": "test: wrong creator" },
+    "server": { "success": false, "message": "Error message", "error": "test: internal" }
+  }
+}

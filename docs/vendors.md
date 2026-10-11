@@ -7,7 +7,8 @@ buys from adapters registered in `gate/adapters/registry.ts` **and** listed in
 Shipped today: `zinc` (see [Zinc](#zinc-retail-amazon-walmart-target-mcmaster-carr) below),
 `treenation` ([Tree-Nation](#tree-nation-tree-planting)), `skyfi`
 ([SkyFi](#skyfi-archive-satellite-imagery)),
-`stannp` ([Stannp](#stannp-us-postcards-and-letters)), `lulu` ([Lulu](#lulu-print-api-zines-and-books)) and
+`stannp` ([Stannp](#stannp-us-postcards-and-letters)), `lulu` ([Lulu](#lulu-print-api-zines-and-books)),
+`slant3d` ([Slant 3D](#slant-3d-3d-printing)) and
 `mock`, a deterministic fake vendor that moves no money. Use the mock for the
 rehearsal stage in [runbook.md](runbook.md).
 
@@ -429,6 +430,86 @@ the card:
 **Live test** (sandbox only; it refuses `LULU_ENV=production`):
 `LULU_LIVE=1 LULU_CLIENT_KEY=… LULU_CLIENT_SECRET=… LULU_CONTACT_EMAIL=… deno test --allow-read --allow-env --allow-net=api.sandbox.lulu.com --filter LIVE gate/adapters/lulu_test.ts`
 It submits Lulu's own docs template book as a sandbox job (never printed), then cancels it.
+
+## Slant 3D (3D printing)
+
+`gate/adapters/slant3d.ts`, against the Slant 3D v2 API (`https://slant3dapi.com/v2/api`,
+spec: <https://slant3dapi.com/v2/api/openapi.json>, docs:
+<https://slant3dapi.com/documentation/introduction>). US print farm, FDM in PLA, PETG and OPM,
+no minimums. The spec says it "is for automated tools and AI Agents". Designs come from the
+[design pipeline](design-pipeline.md).
+
+Billing: orders are charged **at processing time to the card on the Slant account** ("will default
+to your card if not provided"). Drafts are free, but drafting needs a card on file. There is no
+prepaid wallet, no `max_price` and no idempotency key, so the adapter enforces the cap itself
+(below) and the card is the vendor-side cap.
+
+**Env** (gate `.env` only):
+
+| Var | What |
+|---|---|
+| `SLANT3D_API_KEY` | Bearer key from the Slant account page. Max 3 keys per account |
+| `SLANT3D_PLATFORM_ID` | the platform id (Account page → Platforms). Every upload and order needs one; max 5 per account. The adapter never creates platforms |
+| `SLANT3D_CUSTOMER_EMAIL` | email on the order (Slant's shipping notices go here) |
+| `SLANT3D_BASE_URL` | optional, default `https://slant3dapi.com/v2/api` (https only) |
+| `OWNER_SHIP_TO_JSON` | shared with Zinc (same shape, see above); converted to Slant's `Address` |
+
+Allow the hosts: `ops/install.sh --allow-net slant3dapi.com,<upload host>`. Uploads go to a
+presigned S3 URL that Slant hands out, not to slant3dapi.com. The live test prints the request
+that fails if the host is missing; add that S3 hostname. If agents give https design URLs,
+their hosts need allowing too.
+
+**Items.** `sku` = `<PROFILE>:<color>`, e.g. `PLA:black`, `PETG:dark blue` (profiles `PLA`,
+`PETG`, `OPM`). An exact color match wins (`black` never becomes `matte black`), then a unique
+partial match; an ambiguous or out-of-stock color is refused. `url` = the design file: a path
+under `$DATA_DIR/designs/` (relative, or absolute but resolving inside it, symlinks included) or
+an https URL the gate host fetches. `.stl` (binary or ASCII) or `.3mf`, at most 50 MB. `qty` 1-100,
+at most 10 items. `maxUnitCents` is checked against the draft's item price.
+
+**How it maps:**
+
+- `quote()`: `GET /filaments` (resolve the sku) → upload each design (`POST /files/direct-upload`,
+  `PUT` to the presigned URL without the API key, `POST /files/confirm-upload` with the
+  placeholder verbatim; cached by sha256, so a re-quote doesn't upload again; 500 uploads per
+  platform per day) → `POST /orders` to make a **draft**. subtotal = `printingCost`, shipping =
+  `deliveryCost`, tax 0, `vendorRef` = the draft id. Money strings are parsed exactly, not as floats.
+  Each quote leaves one draft behind; drafts are never charged and `listCharges` skips them.
+- `place()`: the gate re-quotes right before placing and hands that newest quote over. The adapter
+  `GET`s the draft and refuses with `GuardRefused` (nothing charged) unless it is still `DRAFT`,
+  `printing + delivery` equals the quoted total and is within the hard cap, and it holds exactly
+  the quoted files, filaments and quantities. Then `POST /orders/{id}` processes it (charges).
+  `chargedCents` = the processed order's printing + delivery. A draft that is already processed
+  is returned, not processed again (a retry). A 4xx with the order still `DRAFT` is a
+  `GuardRefused`; a 5xx, a network error or a charge above the cap is a `Slant3dError` →
+  `outcome_unknown` + STOP.
+- `status()`: `SHIPPED` → shipped, `DELIVERED` → delivered, `CANCELED` → cancelled,
+  `PAYMENT_ERROR` → failed, every other status (PAID, QUEUED, PRINTING, … AWAITING_SHIPMENT) →
+  open. Tracking comes from `fulfillment.tracking_number`.
+- `cancel()`: `DELETE /orders/{id}` cancels **and refunds** before production. After shipping
+  Slant refunds only. A 4xx → `false`.
+- `listCharges()`: `GET /orders` (all platforms on the account, paged, `startDate` a week before
+  `since`), one charge per order in a paid status, `amount` = printing + delivery, `at` =
+  `processedAt`, id = `paymentId` (or the order id). Drafts, cancelled (refunded) and
+  payment-error orders are skipped. An order placed by hand on the site shows up here.
+- `pause()` is a local flag. **The real kill is revoking the key** on the Slant account page and
+  pausing the card.
+- `reachFor`: `self` for the owner-home label, `others` for any other address. Slant's
+  `Address` matches the gate's `ShipTo`, so third-party shipping works (and always asks).
+
+**Not verified until the first real order:** whether any sales tax is added on top of printing +
+delivery (none appears in the spec or the examples); the `Content-Type` the presigned PUT expects
+(the adapter sends `application/octet-stream`); `.3mf` upload (the docs list it, the spec's
+`File.type` enum has only `stl`); the URL-upload `POST /files` that the docs show but the spec lacks
+(not used: the gate fetches https designs itself and uploads them through the presigned flow).
+
+**Vendor-side cap.** Slant bills a card, so the card is the cap: a single-merchant virtual card
+locked to Slant 3D with a monthly limit (e.g. Privacy.com, $50/month), added on the Slant account
+page. Name the key `slant3d-<host>-<yyyy-mm>`.
+
+**Live test** (quote only; refuses to process; leaves one unpaid draft):
+`SLANT3D_LIVE=1 deno test --allow-read --allow-write=/tmp --allow-env --allow-net=slant3dapi.com,<s3 host> --filter LIVE gate/adapters/slant3d_test.ts`
+with `SLANT3D_API_KEY` and `SLANT3D_PLATFORM_ID` in the environment (plus
+`SLANT3D_CUSTOMER_EMAIL` and `OWNER_SHIP_TO_JSON` for the draft step).
 
 ## Roadmap adapters
 
