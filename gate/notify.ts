@@ -330,6 +330,7 @@ export const VENDOR_LABELS: Record<string, string> = {
   mouser: "electronics (Mouser)",
   treenation: "trees (Tree-Nation)",
   skyfi: "satellite image (SkyFi)",
+  cj: "China via CJdropshipping",
 };
 
 export function vendorLabel(vendor: string): string {

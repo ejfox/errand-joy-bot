@@ -1,0 +1,141 @@
+{
+  "_note": "createOrderV2, getOrderDetail and order/list shapes from the CJ shopping docs. Fake values.",
+  "create": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": {
+      "orderNumber": "example-idem-1",
+      "orderId": "fake-order-0001",
+      "shipmentOrderId": "fake-shipment-0001",
+      "iossAmount": null,
+      "iossTaxHandlingFee": null,
+      "postageAmount": 12.41,
+      "productAmount": 25.0,
+      "productOriginalAmount": 25.0,
+      "productDiscountAmount": 0,
+      "postageDiscountAmount": 0,
+      "postageOriginalAmount": 12.41,
+      "totalDiscountAmount": 0,
+      "actualPayment": null,
+      "orderOriginalAmount": 37.41,
+      "cjPayUrl": "",
+      "orderAmount": 37.41,
+      "logisticsMiss": false,
+      "productInfoList": [
+        { "storeLineItemId": null, "lineItemId": "fake-line-0001", "variantId": "fake-vid-0001", "isGroup": false, "quantity": 2, "subOrderProducts": [] }
+      ],
+      "orderStatus": "CREATED",
+      "interceptOrderReasons": []
+    },
+    "requestId": "example-request-create",
+    "success": true
+  },
+  "detail_created": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": {
+      "orderId": "fake-order-0001",
+      "orderNum": "example-idem-1",
+      "platformOrderId": null,
+      "cjOrderId": null,
+      "cjOrderCode": "SD-fake-0001",
+      "fromCountryCode": "CN",
+      "shippingCountryCode": "US",
+      "shippingProvince": "NY",
+      "shippingCity": "Exampleville",
+      "shippingPhone": "5555550100",
+      "shippingAddress": "101 Example St",
+      "shippingCustomerName": "Example Owner",
+      "remark": null,
+      "orderWeight": 600,
+      "orderStatus": "CREATED",
+      "subStatus": null,
+      "orderAmount": 37.41,
+      "productAmount": 25.0,
+      "postageAmount": 12.41,
+      "logisticName": "Example DDP Line",
+      "trackNumber": null,
+      "trackingProvider": null,
+      "trackingUrl": null,
+      "createDate": "2026-10-11 12:00:00",
+      "paymentDate": null,
+      "isComplete": 1,
+      "isSandbox": 1,
+      "productList": [{ "vid": "fake-vid-0001", "quantity": 2, "sellPrice": 12.5, "lineItemId": "fake-line-0001" }]
+    },
+    "requestId": "example-request-detail"
+  },
+  "detail_paid": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": {
+      "orderId": "fake-order-0001",
+      "orderNum": "example-idem-1",
+      "cjOrderId": "CJ-fake-0001",
+      "cjOrderCode": "SD-fake-0001",
+      "fromCountryCode": "CN",
+      "shippingCountryCode": "US",
+      "orderStatus": "UNSHIPPED",
+      "subStatus": "PENDING",
+      "orderAmount": 37.41,
+      "productAmount": 25.0,
+      "postageAmount": 12.41,
+      "logisticName": "Example DDP Line",
+      "trackNumber": null,
+      "trackingUrl": null,
+      "createDate": "2026-10-11 12:00:00",
+      "paymentDate": "2026-10-11 12:01:00",
+      "isSandbox": 1,
+      "productList": [{ "vid": "fake-vid-0001", "quantity": 2, "sellPrice": 12.5 }]
+    },
+    "requestId": "example-request-detail-paid"
+  },
+  "detail_shipped": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": {
+      "orderId": "fake-order-0001",
+      "orderNum": "example-idem-1",
+      "cjOrderCode": "SD-fake-0001",
+      "shippingCountryCode": "US",
+      "orderStatus": "SHIPPED",
+      "subStatus": null,
+      "orderAmount": 37.41,
+      "logisticName": "Example DDP Line",
+      "trackNumber": "TESTTRACK0001",
+      "trackingProvider": "Example_Carrier",
+      "trackingUrl": "https://track.example.com/search?no=TESTTRACK0001",
+      "createDate": "2026-10-11 12:00:00",
+      "paymentDate": "2026-10-11 12:01:00",
+      "isSandbox": 1
+    },
+    "requestId": "example-request-detail-shipped"
+  },
+  "list_unshipped": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": {
+      "pageNum": 1,
+      "pageSize": 50,
+      "total": 3,
+      "list": [
+        { "orderId": "fake-order-0001", "orderNum": "example-idem-1", "orderStatus": "UNSHIPPED", "orderAmount": 37.41, "paymentDate": "2026-10-11 12:01:00", "isSandbox": 1 },
+        { "orderId": "fake-order-0002", "orderNum": "example-idem-2", "orderStatus": "UNSHIPPED", "orderAmount": 9.99, "paymentDate": "2026-10-01 08:00:00", "isSandbox": 1 },
+        { "orderId": "fake-order-real-0003", "orderNum": "example-real-3", "orderStatus": "UNSHIPPED", "orderAmount": 50.0, "paymentDate": "2026-10-10 08:00:00", "isSandbox": 0 }
+      ]
+    },
+    "requestId": "example-request-list"
+  },
+  "list_empty": {
+    "code": 200,
+    "result": true,
+    "message": "Success",
+    "data": { "pageNum": 1, "pageSize": 50, "total": 0, "list": [] },
+    "requestId": "example-request-list-empty"
+  }
+}

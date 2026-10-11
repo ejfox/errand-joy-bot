@@ -12,6 +12,7 @@ import { luluFromEnv } from "./lulu.ts";
 import { slant3dFromEnv } from "./slant3d.ts";
 import { prodigiFromEnv } from "./prodigi.ts";
 import { mouserFromEnv } from "./mouser.ts";
+import { cjFromEnv } from "./cj.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
 //   craftcloud / pcbway                   self when shipTo is owner-home, otherwise others
@@ -124,6 +125,7 @@ export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => V
   slant3d: () => slant3dFromEnv(),
   prodigi: () => prodigiFromEnv(),
   mouser: () => mouserFromEnv(),
+  cj: () => cjFromEnv(),
 };
 
 export function knownVendors(): string[] {
@@ -149,6 +151,8 @@ export const VENDOR_HOSTS: Readonly<Record<string, readonly string[]>> = {
   slant3d: ["slant3dapi.com", "slant-gatekeeper.s3.us-west-2.amazonaws.com"],
   prodigi: ["api.prodigi.com", "api.sandbox.prodigi.com"],
   mouser: ["api.mouser.com"],
+  // Sandbox is a per-order flag (isSandbox), not a host: one host for both.
+  cj: ["developers.cjdropshipping.com"],
 };
 
 /** Deduped --allow-net hosts for the enabled vendors. Unknown vendors throw (closed allowlist). */
