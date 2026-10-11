@@ -220,7 +220,8 @@ step "3. deno cache / check / test"
     tmpdata="$(mktemp -d /tmp/ejb-test.XXXXXX)"
     # Tests never touch the network beyond loopback, never DM, never spend.
     env -u GATE_AGENT_TOKEN -u GATE_ADMIN_TOKEN DRY_RUN=1 DATA_DIR="$tmpdata" \
-      "$DENO" test --allow-read --allow-write=/tmp --allow-env --allow-net=127.0.0.1
+      "$DENO" test --allow-read --allow-write=/tmp --allow-env --allow-net=127.0.0.1 \
+      --unstable-kv gate relay # same flags as `deno task test`; relay tests also run on Deno KV
     rm -rf "$tmpdata"
   fi
 )
