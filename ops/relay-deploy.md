@@ -1,8 +1,8 @@
 # Deploying the approval relay (`relay/`)
 
 The relay is the **only** public piece of errand-joy-bot. It renders the one-use
-approve / veto page at `https://approve.example.com/a/<token>` that the owner's DM links
-to. It holds no vendor keys and no gate tokens, only `RELAY_TOKEN`, and it never calls
+approve / veto page at `https://approve.example.com/a/<lookupId>#<token>` that the owner's
+DM links to. It holds no vendor keys and no gate tokens, only `RELAY_TOKEN`, and it never calls
 the gate: the gate pushes approval records (token hashes only) and pulls verdicts.
 
 Everything else stays private:
@@ -13,12 +13,12 @@ Everything else stays private:
 | `.env`, `config.toml`, `data/` | the gate host's disk, mode 600 / 700 |
 | relay (`relay/`) | public over HTTPS, keyless |
 
-> **Access logs capture live link tokens.** The token is in the URL path, so any proxy,
-> CDN, tunnel or platform that logs request paths (Cloudflare, smallweb, Deno Deploy,
-> nginx, Caddy) records it. Tokens are single-use and expire after 24h, and an approve
-> also needs the token in the POST body, but treat those logs as sensitive: don't ship
-> `/a/*` paths to a third-party log service, or redact them. The relay itself logs
-> nothing.
+> **Access logs see only lookupIds.** The token is in the link's `#fragment`, which
+> browsers never send, so proxies, CDNs, tunnels and platforms that log request paths
+> (Cloudflare, smallweb, Deno Deploy, nginx, Caddy) record only the public lookupId, which
+> cannot approve or deny anything. The token reaches the relay only in the POST body of a
+> tap; don't turn on request-body logging anywhere in front of the relay. The relay itself
+> logs nothing.
 
 Deploy **only the `relay/` folder**. It is self-contained (a test fails on any `../`
 import). Never point a host at the repo root: that would expose the gate code and,
@@ -165,15 +165,17 @@ persistent writable disk. Set `RELAY_STORE=kv` and the relay uses Deno KV instea
      Deno Deploy unless you front it with Cloudflare; with the wrong header every visitor
      shares one rate-limit bucket.
 3. Add a custom domain such as `approve.example.com`, or use the project's deno.net URL.
-4. Deno Deploy keeps request logs with paths; see the access-log warning above.
+4. Deno Deploy keeps request logs with paths; those hold only lookupIds (see the
+   access-log note above).
 
 ---
 
 ## Verify the public surface (any target)
 
 ```bash
-curl -sI https://approve.example.com/a/not-a-real-token                       # 404, neutral page
-curl -sI https://approve.example.com/a/not-a-real-token | grep -iE 'cache-control|x-robots|referrer'
+curl -sI https://approve.example.com/a/not-a-real-link                        # 404, neutral page
+curl -sI https://approve.example.com/a/not-a-real-link | grep -iE 'cache-control|x-robots|referrer|security-policy'
+#   the CSP's script-src must be a single 'sha256-…' source, never 'unsafe-inline'
 curl -s -o /dev/null -w '%{http_code}\n' https://approve.example.com/internal/verdicts   # 401
 curl -s -o /dev/null -w '%{http_code}\n' https://approve.example.com/a/x/approve          # 405 (GET)
 curl -s -o /dev/null -w '%{http_code}\n' https://approve.example.com/.env                 # 404

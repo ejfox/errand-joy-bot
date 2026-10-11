@@ -525,8 +525,8 @@ export class Orchestrator {
       let denyUrl: string, approveUrl = "";
       try {
         const base = this.d.relayPublicUrl ?? relayPublicUrl();
-        denyUrl = approvalUrl(minted.denyToken, base);
-        if (asks) approveUrl = approvalUrl(minted.approveToken!, base);
+        denyUrl = approvalUrl(record.denyLookupId, minted.denyToken, base);
+        if (asks) approveUrl = approvalUrl(record.approveLookupId!, minted.approveToken!, base);
       } catch {
         minted.denyToken = "";
         minted.approveToken = undefined;

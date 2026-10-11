@@ -85,27 +85,38 @@ Binds `GATE_HOST:GATE_PORT` (default 127.0.0.1:47400). Refuses anything but loop
 - Two SEPARATE tokens per record, 32 random bytes base64url each, stored as sha256 hex only:
   `denyTokenHash` (every record) and `approveTokenHash` (kind `approve` only). Bound to requestId, vendor and
   boundCents; TTL `approval_ttl_hours`; single-use per record.
-- Ask DM: `approve (24h): <RELAY_PUBLIC_URL/a/<approveToken>>` and `deny: <…/a/<denyToken>>`, plus cap headroom
-  ("if approved: $X left today, $Y this month"). Veto DMs (auto, fund, joy) carry only the deny link.
-  Joy DMs and relay summaries never name the item or vendor.
+- Each link also has a public `denyLookupId` / `approveLookupId` (16 random bytes base64url, approve only for kind
+  `approve`) that selects the record; it cannot approve or deny. Links are `/a/<lookupId>#<token>`: the token is in
+  the fragment, which is never sent in a request.
+- Ask DM: `approve (24h): <RELAY_PUBLIC_URL/a/<approveLookupId>#<approveToken>>` and
+  `deny: <…/a/<denyLookupId>#<denyToken>>`, plus cap headroom ("if approved: $X left today, $Y this month").
+  Veto DMs (auto, fund, joy) carry only the deny link. Joy DMs and relay summaries never name the item or vendor.
 - The gate accepts an approve verdict only if `verdict.token` hashes to its stored `approveTokenHash`.
-  A compromised relay can always deny; it can approve only a request whose approve link the owner OPENED
-  (the page load sends the token to the relay host). Deny verdicts need no token (fail-safe direction).
+  A compromised relay can always deny. It receives an approve token only in the POST body of an Approve tap, so
+  prefetchers, link previews and access logs never give it one; only a relay actively serving hostile page code
+  when the owner opens an Approve link could read the fragment. Deny verdicts need no token (fail-safe direction).
 - Tick pulls verdicts BEFORE retrying DMs. A deny is honoured in every pre-placing state, including
   `dm_pending`. If the relay answers `already_decided` to a republish, the row is cancelled and no DM is sent.
 - Quiet hours queue DMs; nothing is placed before its DM is delivered.
 
 ## Relay (relay/, deployed on its own)
 - Public. Holds only `RELAY_TOKEN`; storage `RELAY_STORE=sqlite` (default) or `kv` (Deno KV, for Deno Deploy).
-- `POST /internal/pending` upserts a record (hashes only). `GET /internal/verdicts?since=` lists verdicts; an approve
-  verdict carries the tapped approve token ONCE (deleted when pulled, or 24h after the tap).
-- `GET /a/:token` renders only the form that token can use (approve OR deny); zero writes. Unknown, used and expired
-  tokens get one neutral 404. `POST /a/:token/approve|deny` needs the form field `token` = path token; a token on the
-  wrong action is refused and consumes nothing.
+- `POST /internal/pending` upserts a record (hashes and lookupIds, no tokens). `GET /internal/verdicts?since=` lists
+  verdicts; an approve verdict carries the tapped approve token ONCE (deleted when pulled, or 24h after the tap).
+- `GET /a/:lookupId` renders only the form that link can use (approve OR deny) with an empty `token` field and a
+  disabled button; zero writes; the HTML never contains a token. One inline script (allowed by its sha256 in the CSP,
+  no `'unsafe-inline'` for scripts) copies `location.hash` into the field, enables the button and clears the hash.
+  Without JS nothing can be confirmed. Unknown, used and expired lookupIds get one neutral 404.
+  `POST /a/:lookupId/approve|deny` needs the form field `token` whose sha256 equals the stored hash for that lookupId
+  and action; the wrong action or a wrong token → 403 and nothing is consumed.
 - Every response: `Cache-Control: no-store`, `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer`.
   Per-IP limit 10/min via `RELAY_IP_HEADER` (deny taps exempt).
 
 ## Notifier
 `NOTIFIER=http-dm` (default): `POST NOTIFY_DM_URL` JSON `{userId: NOTIFY_USER_ID, message}`, Bearer `NOTIFY_DM_TOKEN`,
-10s timeout, `ok` only on 2xx + a message id. `HEALTH_ALERT_CMD` gets two generic infra alerts, never purchase details.
+10s timeout, `ok` only on 2xx + a message id.
+`NOTIFIER=ntfy`: `POST ${NTFY_URL:-https://ntfy.sh}/${NTFY_TOPIC}` with the plain-text message as the body, headers
+`Title: errand-joy-bot`, `Markdown: no`, optional `Authorization: Bearer NTFY_TOKEN`; never `Click`/`Actions`/`Attach`.
+`ok` only on 2xx + a JSON `id` (the messageId). On ntfy.sh the topic must be ≥ 24 chars (it is the secret).
+`HEALTH_ALERT_CMD` gets two generic infra alerts, never purchase details.
 `DRY_RUN` uses an in-memory FakeNotifier and FakeRelayClient.

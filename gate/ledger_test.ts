@@ -194,6 +194,8 @@ Deno.test("consumeApproval is single-use and honors expiry", async () => {
     approvalId: "ap1",
     denyTokenHash: "aa",
     approveTokenHash: "aa2",
+    denyLookupId: "lookup-ap1-deny",
+    approveLookupId: "lookup-ap1-approve",
     expiresAt: "2026-10-12T00:00:00.000Z",
   });
   insertApproval(db, {
@@ -201,6 +203,8 @@ Deno.test("consumeApproval is single-use and honors expiry", async () => {
     approvalId: "ap2",
     denyTokenHash: "bb",
     approveTokenHash: "bb2",
+    denyLookupId: "lookup-ap2-deny",
+    approveLookupId: "lookup-ap2-approve",
     expiresAt: "2026-10-10T00:00:00.000Z",
   });
   const now = new Date("2026-10-11T12:00:00Z");
@@ -236,4 +240,15 @@ Deno.test("1000 inserts in under 2s", async () => {
   const ms = performance.now() - t;
   assert.ok(ms < 2000, `took ${ms.toFixed(0)}ms`);
   assert.equal(requestsSince(db, "1970-01-01T00:00:00.000Z"), 1000);
+});
+
+Deno.test("openDb adds the lookup-id columns to a ledger from before fragment links", async () => {
+  const { db, path } = await tmpDb();
+  db.exec("ALTER TABLE approvals DROP COLUMN deny_lookup_id; ALTER TABLE approvals DROP COLUMN approve_lookup_id;");
+  db.close();
+  const db2 = openDb(path);
+  const cols = (db2.prepare("PRAGMA table_info(approvals)").all() as Array<{ name: string }>).map((c) => c.name);
+  assert.ok(cols.includes("deny_lookup_id") && cols.includes("approve_lookup_id"));
+  db2.close();
+  await Deno.remove(path);
 });

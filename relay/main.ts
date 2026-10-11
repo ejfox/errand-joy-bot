@@ -4,7 +4,7 @@
 // Self-contained on purpose: deploy ONLY this folder; no parent-directory imports.
 import { openStore, StoreUnavailable } from "./store.ts";
 import type { ApprovalRecord, Backend, RelayStore } from "./store.ts";
-import { approvalPage, donePage, messagePage, NEUTRAL_HTML } from "./page.ts";
+import { approvalPage, donePage, messagePage, NEUTRAL_HTML, TOKEN_SCRIPT } from "./page.ts";
 
 const MAX_BODY = 4096;
 const RATE_LIMIT = 10; // per IP per minute on /a/*
@@ -13,14 +13,23 @@ const RATE_MAX_KEYS = 10_000;
 const MAX_EXPIRY_AHEAD_MS = 25 * 3600_000;
 const MIN_RELAY_TOKEN_LEN = 32;
 const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/; // gate mints 32 bytes base64url (43 chars)
+const LOOKUP_RE = /^[A-Za-z0-9_-]{16,64}$/; // gate mints 16 bytes base64url (22 chars)
 const HASH_RE = /^[0-9a-f]{64}$/;
 const ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 const VENDOR_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 export const FUND_MAX_CENTS = 100_000; // default RELAY_MAX_CENTS; mirrors gate/types.ts (asserted in main_test.ts)
 const MAX_SUMMARY = 1000; // the gate doesn't cap summary length; keep headroom under the 4KB body cap
 
-const CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+/** CSP source for the page's single inline script: 'sha256-<base64 of sha256(TOKEN_SCRIPT)>'. */
+export const SCRIPT_HASH_SOURCE = `'sha256-${
+  btoa(String.fromCharCode(
+    ...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(TOKEN_SCRIPT))),
+  ))
+}'`;
+
+// Scripts: only that one hash (no 'unsafe-inline', no nonce, no sources). Everything else as before.
+const CSP = `default-src 'none'; script-src ${SCRIPT_HASH_SOURCE}; style-src 'unsafe-inline'; ` +
+  "form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 // ── env / config ──────────────────────────────────────────────────────────
 function env(name: string): string | undefined {
@@ -207,6 +216,8 @@ const ALLOWED_KEYS = new Set([
   "requestId",
   "denyTokenHash",
   "approveTokenHash",
+  "denyLookupId",
+  "approveLookupId",
   "vendor",
   "boundCents",
   "kind",
@@ -228,6 +239,8 @@ function validateRecord(v: unknown, now: Date): ApprovalRecord | string {
     requestId,
     denyTokenHash,
     approveTokenHash,
+    denyLookupId,
+    approveLookupId,
     vendor,
     boundCents,
     kind,
@@ -245,6 +258,15 @@ function validateRecord(v: unknown, now: Date): ApprovalRecord | string {
       return "bad_approveTokenHash";
     }
     if (approveTokenHash === denyTokenHash) return "same_token_hashes";
+  }
+  // Lookup ids follow the same rule: deny always, approve iff kind=approve, never equal.
+  if (typeof denyLookupId !== "string" || !LOOKUP_RE.test(denyLookupId)) return "bad_denyLookupId";
+  if (kind === "veto" && "approveLookupId" in o) return "approveLookupId_on_veto";
+  if (kind === "approve") {
+    if (typeof approveLookupId !== "string" || !LOOKUP_RE.test(approveLookupId)) {
+      return "bad_approveLookupId";
+    }
+    if (approveLookupId === denyLookupId) return "same_lookup_ids";
   }
   if (typeof vendor !== "string" || !VENDOR_RE.test(vendor)) return "bad_vendor";
   if (
@@ -267,6 +289,8 @@ function validateRecord(v: unknown, now: Date): ApprovalRecord | string {
     requestId,
     denyTokenHash,
     ...(kind === "approve" ? { approveTokenHash: approveTokenHash as string } : {}),
+    denyLookupId,
+    ...(kind === "approve" ? { approveLookupId: approveLookupId as string } : {}),
     vendor,
     boundCents,
     kind,
@@ -319,22 +343,27 @@ async function handleInternal(req: Request, path: string, now: Date): Promise<Re
   return neutral();
 }
 
-async function handleView(req: Request, rawToken: string, now: Date): Promise<Response> {
+/**
+ * GET/HEAD /a/:lookupId. The path carries only the public lookupId (the token is in the link's
+ * #fragment, which never reaches a server), so prefetchers and unfurlers see a page with an empty
+ * token field and a disabled button. ZERO writes.
+ */
+async function handleView(req: Request, lookupId: string, now: Date): Promise<Response> {
   const head = req.method === "HEAD";
   if (req.method !== "GET" && !head) return methodNotAllowed("GET, HEAD");
-  // Same work on every path: hash whatever arrived, look it up, then branch. ZERO writes.
-  const hash = await sha256Hex(rawToken);
-  const found = await (await getStore()).findByHash(hash);
-  if (
-    !TOKEN_RE.test(rawToken) || !found || found.approval.usedAt !== null ||
-    found.approval.expiresAt <= now.toISOString()
-  ) return neutral(head);
-  return respond(head ? null : approvalPage(found.approval, rawToken, found.role), 200);
+  const found = LOOKUP_RE.test(lookupId) ? await (await getStore()).findByLookupId(lookupId) : null;
+  if (!found || found.approval.usedAt !== null || found.approval.expiresAt <= now.toISOString()) {
+    return neutral(head);
+  }
+  return respond(head ? null : approvalPage(found.approval, lookupId, found.role), 200);
 }
 
+const forbidden = () => respond(messagePage("Forbidden", "This request could not be verified."), 403);
+
+/** POST /a/:lookupId/approve|deny with the form field `token` (filled in from the fragment). */
 async function handleTap(
   req: Request,
-  rawToken: string,
+  lookupId: string,
   verdict: "approve" | "deny",
   now: Date,
 ): Promise<Response> {
@@ -350,14 +379,21 @@ async function handleTap(
     if (e instanceof TooLarge) return respond(messagePage("Too large", "Request too large."), 413);
     return respond(messagePage("Bad request", "Bad request."), 400);
   }
-  if (!(await safeEqual(bodyToken, rawToken))) {
-    return respond(messagePage("Forbidden", "This request could not be verified."), 403);
-  }
-  const hash = await sha256Hex(rawToken);
-  if (!TOKEN_RE.test(rawToken)) return neutral();
-  // On approve, the plaintext approve token is kept as proof of tap for the gate (pulled once).
-  const r = await (await getStore()).tap(hash, verdict, now, verdict === "approve" ? rawToken : undefined);
+  if (!LOOKUP_RE.test(lookupId)) return neutral();
+  // Order inside tap(): unknown/used/expired → gone (neutral 404), other action → wrong_link (403),
+  // then the token: missing (no JS), malformed or not this link's → bad_token (403). A 403 writes nothing.
+  const hash = await sha256Hex(TOKEN_RE.test(bodyToken) ? bodyToken : "");
+  // On approve, the plaintext approve token is kept as proof of tap for the gate (pulled once);
+  // it is only stored on "ok", i.e. after it matched the stored hash.
+  const r = await (await getStore()).tap(
+    lookupId,
+    hash,
+    verdict,
+    now,
+    verdict === "approve" ? bodyToken : undefined,
+  );
   if (r === "ok") return respond(donePage(verdict), 200);
+  if (r === "bad_token") return forbidden(); // the token isn't this link's: nothing consumed
   if (r === "wrong_link") {
     // Each token does one thing; nothing was consumed.
     return respond(

@@ -20,6 +20,11 @@ export function openDb(path: string): Db {
   db.exec("PRAGMA synchronous=NORMAL;");
   db.exec("PRAGMA busy_timeout=5000;");
   db.exec(SCHEMA);
+  // A ledger from before fragment links has no lookup-id columns; add them (nullable, nothing dropped).
+  const cols = db.prepare("PRAGMA table_info(approvals)").all() as Array<{ name: string }>;
+  for (const c of ["deny_lookup_id", "approve_lookup_id"]) {
+    if (!cols.some((x) => x.name === c)) db.exec(`ALTER TABLE approvals ADD COLUMN ${c} TEXT`);
+  }
   const seed = db.prepare(
     "INSERT OR IGNORE INTO budgets (key, window, cap_cents) VALUES (?, ?, ?)",
   );

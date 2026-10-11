@@ -62,12 +62,16 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_request ON events(request_id, id);
 
 -- Only sha256(token) is stored; plaintext tokens never touch the DB. Two separate tokens:
--- deny (every record) and approve (kind = 'approve' only).
+-- deny (every record) and approve (kind = 'approve' only). The lookup ids are the PUBLIC part of
+-- each link's path (/a/<lookupId>#<token>); they cannot approve anything. Rows from before the
+-- lookup ids existed have NULL there (db.ts adds the columns to an older ledger).
 CREATE TABLE IF NOT EXISTS approvals (
   approval_id         TEXT PRIMARY KEY,
   request_id          TEXT NOT NULL REFERENCES requests(id),
   deny_token_hash     TEXT NOT NULL UNIQUE,
   approve_token_hash  TEXT UNIQUE,
+  deny_lookup_id      TEXT,
+  approve_lookup_id   TEXT,
   vendor       TEXT NOT NULL,
   bound_cents  INTEGER NOT NULL,
   kind         TEXT NOT NULL CHECK (kind IN ('approve','veto')),

@@ -402,6 +402,8 @@ function rowToApproval(r: Row): ApprovalRecord {
     requestId: String(r.request_id),
     denyTokenHash: String(r.deny_token_hash),
     ...(r.approve_token_hash === null ? {} : { approveTokenHash: String(r.approve_token_hash) }),
+    denyLookupId: r.deny_lookup_id == null ? "" : String(r.deny_lookup_id), // "" = pre-lookup-id row
+    ...(r.approve_lookup_id == null ? {} : { approveLookupId: String(r.approve_lookup_id) }),
     vendor: String(r.vendor),
     boundCents: Number(r.bound_cents),
     kind: r.kind as "approve" | "veto",
@@ -418,14 +420,16 @@ export function insertApproval(
   now = new Date(),
 ): void {
   db.prepare(
-    `INSERT INTO approvals (approval_id, request_id, deny_token_hash, approve_token_hash, vendor,
-       bound_cents, kind, summary, expires_at, used_at, verdict, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO approvals (approval_id, request_id, deny_token_hash, approve_token_hash, deny_lookup_id,
+       approve_lookup_id, vendor, bound_cents, kind, summary, expires_at, used_at, verdict, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     a.approvalId,
     a.requestId,
     a.denyTokenHash,
     nn(a.approveTokenHash),
+    a.denyLookupId || null,
+    nn(a.approveLookupId),
     a.vendor,
     a.boundCents,
     a.kind,
@@ -455,12 +459,14 @@ export function getApproval(
  */
 export function upsertApproval(db: Db, a: ApprovalRecord, now = new Date()): void {
   db.prepare(
-    `INSERT INTO approvals (approval_id, request_id, deny_token_hash, approve_token_hash, vendor,
-       bound_cents, kind, summary, expires_at, used_at, verdict, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+    `INSERT INTO approvals (approval_id, request_id, deny_token_hash, approve_token_hash, deny_lookup_id,
+       approve_lookup_id, vendor, bound_cents, kind, summary, expires_at, used_at, verdict, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
      ON CONFLICT(approval_id) DO UPDATE SET
        deny_token_hash = excluded.deny_token_hash,
        approve_token_hash = excluded.approve_token_hash,
+       deny_lookup_id = excluded.deny_lookup_id,
+       approve_lookup_id = excluded.approve_lookup_id,
        vendor = excluded.vendor,
        bound_cents = excluded.bound_cents,
        kind = excluded.kind,
@@ -472,6 +478,8 @@ export function upsertApproval(db: Db, a: ApprovalRecord, now = new Date()): voi
     a.requestId,
     a.denyTokenHash,
     nn(a.approveTokenHash),
+    a.denyLookupId || null,
+    nn(a.approveLookupId),
     a.vendor,
     a.boundCents,
     a.kind,

@@ -110,9 +110,16 @@ export function req(over: Partial<PurchaseRequest> = {}): PurchaseRequest {
   };
 }
 
-/** Every approval-link token in a DM, in order (ask DMs: approve first, then deny). */
+const LINK_RE = /<https:\/\/approve\.example\.test\/a\/([A-Za-z0-9_-]{22})#([A-Za-z0-9_-]{43})>/g;
+
+/** Every approval-link token (the #fragment) in a DM, in order (ask DMs: approve first, then deny). */
 export function tokensFrom(msg: string): string[] {
-  return [...msg.matchAll(/<https:\/\/approve\.example\.test\/a\/([A-Za-z0-9_-]{43})>/g)].map((m) => m[1]);
+  return [...msg.matchAll(LINK_RE)].map((m) => m[2]);
+}
+
+/** Every approval-link lookupId (the path part) in a DM, in the same order. */
+export function lookupIdsFrom(msg: string): string[] {
+  return [...msg.matchAll(LINK_RE)].map((m) => m[1]);
 }
 
 function tokenFrom(msg: string): string {
@@ -132,11 +139,14 @@ Deno.test("ask tier: exactly one DM with approve link; published record holds on
   assert(msg.includes("approve (24h): <"));
   const [approveToken, denyToken] = tokensFrom(msg);
   assert(approveToken && denyToken && approveToken !== denyToken, "two separate links");
-  assert(msg.includes(`deny: <${RELAY}/a/${denyToken}>`));
   assertEquals(h.relay.published.length, 1);
   const rec = h.relay.published[0];
+  assert(msg.includes(`deny: <${RELAY}/a/${rec.denyLookupId}#${denyToken}>`));
+  assert(msg.includes(`approve (24h): <${RELAY}/a/${rec.approveLookupId}#${approveToken}>`));
+  assertEquals(lookupIdsFrom(msg), [rec.approveLookupId, rec.denyLookupId]);
   assertEquals(Object.keys(rec).sort(), [
-    "approvalId", "approveTokenHash", "boundCents", "denyTokenHash", "expiresAt", "kind", "requestId", "summary", "vendor",
+    "approvalId", "approveLookupId", "approveTokenHash", "boundCents", "denyLookupId", "denyTokenHash", "expiresAt",
+    "kind", "requestId", "summary", "vendor",
   ]);
   assertEquals(rec.kind, "approve");
   assertEquals(rec.boundCents, 8000);
@@ -166,6 +176,8 @@ Deno.test("veto DMs carry only the deny link; their record has no approve hash",
   await h.orch.submit(req());
   assertEquals(tokensFrom(h.notifier.messages[0]).length, 1);
   assertEquals(h.relay.published[0].approveTokenHash, undefined);
+  assertEquals(h.relay.published[0].approveLookupId, undefined);
+  assertEquals(lookupIdsFrom(h.notifier.messages[0]), [h.relay.published[0].denyLookupId]);
   assertEquals(h.relay.published[0].kind, "veto");
 });
 
@@ -241,7 +253,8 @@ Deno.test("joy veto: DM and relay summary never name the item", async () => {
   assertEquals(row.state, "dm_delivered");
   const msg = h.notifier.messages[0];
   assert(msg.startsWith("robot spent $23.00 on something this week. tap to veto: <https://approve.example.test/a/"));
-  for (const s of [msg, h.relay.published[0].summary]) {
+  // check the text minus the link: random lookupIds / tokens can contain "X9" by chance
+  for (const s of [msg.replace(/<https:\/\/[^>]+>/g, "<link>"), h.relay.published[0].summary]) {
     assert(!s.includes("Telescope"));
     assert(!s.includes("X9"));
   }

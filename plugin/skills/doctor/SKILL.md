@@ -31,8 +31,9 @@ If `stopped: true`, find out why before anyone clears it. Look in the most recen
 
 - `bin/buy list dm_pending`: rows here mean the owner hasn't been notified yet. Look at `dmAttempts` and `dmLastError`.
 - Quiet hours (22:00 to 07:30 in the configured timezone by default) queue DMs on purpose. That isn't a fault.
-- `unknown_transport`: `NOTIFIER` names a transport that doesn't exist (only `http-dm` is implemented).
-- `no_message_id`, 401 or timeouts: the DM endpoint is down, rejected the token, or didn't return a message id. Have the user check the endpoint's own health. If the token is wrong, they re-set `NOTIFY_DM_TOKEN` with `ops/set-key.sh`.
+- `unknown_transport`: `NOTIFIER` names a transport that doesn't exist (only `ntfy` and `http-dm` are implemented).
+- `no_message_id`, 401 or timeouts: the DM endpoint (or ntfy server) is down, rejected the token, or didn't return a message id. Have the user check the endpoint's own health. If the token is wrong, they re-set `NOTIFY_DM_TOKEN` (http-dm) or `NTFY_TOKEN` (ntfy) with `ops/set-key.sh`.
+- ntfy only: `notifier_unconfigured` means `NTFY_TOPIC` is empty; `ntfy_bad_topic` means it has characters other than letters, digits, `_` and `-` (or is over 64); `ntfy_topic_guessable` means it is under 24 characters on public ntfy.sh. Fix with `ops/set-key.sh --generate NTFY_TOPIC` (then re-subscribe in the app). Never print the topic.
 - `DRY_RUN=1` means DMs are recorded in memory and never sent. Ask the user whether that's the intent.
 
 ## 5. Recent ledger events
@@ -50,10 +51,10 @@ Look for requests stuck in a state, repeated `dm_pending`, `policy_changed` deni
 Ask the user for the relay's public origin (it's not a secret). Then:
 
 ```
-curl -sI <relay>/a/not-a-real-token
+curl -sI <relay>/a/not-a-real-link
 ```
 
-Expect a neutral 404 with `cache-control: no-store`, `x-robots-tag: noindex, nofollow` and `referrer-policy: no-referrer`. A 5xx, TLS error or timeout means the relay is down. Point to `ops/relay-deploy.md` for their target. If approvals are tapped but nothing moves, the gate can't pull verdicts: check the gate log for relay errors, and check that `RELAY_URL` on the gate and `RELAY_TOKEN` on both sides match. The user verifies the token with set-key's `…last4` output, never by printing it.
+Expect a neutral 404 with `cache-control: no-store`, `x-robots-tag: noindex, nofollow`, `referrer-policy: no-referrer`, and a `content-security-policy` whose `script-src` is a single `'sha256-…'` source (never `'unsafe-inline'`). A relay without a `script-src` is an older version whose links put the token in the path; tell the user to redeploy `relay/`. A 5xx, TLS error or timeout means the relay is down. Point to `ops/relay-deploy.md` for their target. If approvals are tapped but nothing moves, the gate can't pull verdicts: check the gate log for relay errors, and check that `RELAY_URL` on the gate and `RELAY_TOKEN` on both sides match. The user verifies the token with set-key's `…last4` output, never by printing it.
 
 ## Report
 

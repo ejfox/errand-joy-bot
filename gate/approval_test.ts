@@ -3,6 +3,7 @@ import {
   approvalUrl,
   buildApprovalRecord,
   hashToken,
+  mintLookupId,
   mintToken,
   timingSafeEqualStr,
   verifyApproveToken,
@@ -22,13 +23,22 @@ Deno.test("hashToken: sha256 hex", async () => {
   assertEquals(await hashToken("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 });
 
-Deno.test("approvalUrl: <base>/a/<token>, https only, malformed token refused", () => {
+Deno.test("approvalUrl: <base>/a/<lookupId>#<token>, https only, malformed parts refused", () => {
   const t = mintToken();
-  assertEquals(approvalUrl(t, BASE), `${BASE}/a/${t}`);
-  assertEquals(approvalUrl(t, BASE + "/"), `${BASE}/a/${t}`);
-  assertThrows(() => approvalUrl(t, "http://approve.example.test"));
-  assertThrows(() => approvalUrl(t, "https://u:p@approve.example.test"));
-  assertThrows(() => approvalUrl("../../x", BASE));
+  const id = mintLookupId();
+  assertEquals(id.length, 22);
+  assertEquals(approvalUrl(id, t, BASE), `${BASE}/a/${id}#${t}`);
+  assertEquals(approvalUrl(id, t, BASE + "/"), `${BASE}/a/${id}#${t}`);
+  // the token is only in the fragment: the part a browser sends never contains it
+  const u = new URL(approvalUrl(id, t, BASE));
+  assertEquals(u.pathname, `/a/${id}`);
+  assertEquals(u.hash, `#${t}`);
+  assertThrows(() => approvalUrl(id, t, "http://approve.example.test"));
+  assertThrows(() => approvalUrl(id, t, "https://u:p@approve.example.test"));
+  assertThrows(() => approvalUrl(id, t, BASE + "#x"));
+  assertThrows(() => approvalUrl(id, "../../x", BASE));
+  assertThrows(() => approvalUrl("../../x", t, BASE));
+  assertThrows(() => approvalUrl(t, t, BASE), "a token is not a lookupId");
 });
 
 Deno.test("buildApprovalRecord: separate approve/deny tokens; record holds hashes, never tokens", async () => {
@@ -53,6 +63,14 @@ Deno.test("buildApprovalRecord: separate approve/deny tokens; record holds hashe
   assertEquals(again.record.approvalId, record.approvalId);
   assertNotEquals(again.record.denyTokenHash, record.denyTokenHash);
   assertNotEquals(again.record.approveTokenHash, record.approveTokenHash);
+  // two public lookupIds, distinct, fresh on every mint, unrelated to the tokens
+  assert(/^[A-Za-z0-9_-]{22}$/.test(record.denyLookupId) && /^[A-Za-z0-9_-]{22}$/.test(record.approveLookupId!));
+  assertNotEquals(record.denyLookupId, record.approveLookupId);
+  assertNotEquals(again.record.denyLookupId, record.denyLookupId);
+  assertNotEquals(again.record.approveLookupId, record.approveLookupId);
+  for (const id of [record.denyLookupId, record.approveLookupId!]) {
+    assert(!approveToken.includes(id) && !denyToken.includes(id));
+  }
 });
 
 Deno.test("buildApprovalRecord: veto kind has a deny token only", async () => {
@@ -61,6 +79,8 @@ Deno.test("buildApprovalRecord: veto kind has a deny token only", async () => {
   });
   assertEquals(approveToken, undefined);
   assertEquals(record.approveTokenHash, undefined);
+  assertEquals(record.approveLookupId, undefined);
+  assert(/^[A-Za-z0-9_-]{22}$/.test(record.denyLookupId));
   assert(!(await verifyApproveToken(denyToken, record)));
 });
 

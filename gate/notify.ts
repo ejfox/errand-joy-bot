@@ -4,10 +4,13 @@
 // optional local command. Purchase details and links NEVER go that way.
 //
 // Transport settings come from env (secrets live in .env), so a fork configures rather than edits:
-//   NOTIFIER          transport name (default "http-dm"; see makeNotifier for the seam)
+//   NOTIFIER          transport name: "http-dm" (default) or "ntfy" (see NOTIFY_TRANSPORTS)
 //   NOTIFY_DM_URL     http-dm endpoint (https, or http on loopback only)
 //   NOTIFY_DM_TOKEN   http-dm bearer token
 //   NOTIFY_USER_ID    recipient id passed as `userId`
+//   NTFY_URL          ntfy server (default https://ntfy.sh; https, or http on loopback only)
+//   NTFY_TOPIC        ntfy topic. On a public server the topic name IS the secret: long and random.
+//   NTFY_TOKEN        optional ntfy access token (Bearer)
 //   HEALTH_ALERT_CMD  optional executable for infra alerts (no-op when unset)
 // Timezone and quiet hours are POLICY: they come from config.toml (config.ts), never env.
 import type { DmResult, Notifier, Quote, RequestRow, ShipTo } from "./types.ts";
@@ -95,6 +98,75 @@ export function extractMessageId(body: unknown): string | undefined {
   return undefined;
 }
 
+// ── Transport: ntfy ───────────────────────────────────────────────────────
+export const NTFY_DEFAULT_URL = "https://ntfy.sh";
+/** Shortest topic accepted on the public ntfy.sh, where anyone who knows the name can subscribe. */
+export const NTFY_PUBLIC_MIN_TOPIC = 24;
+
+/**
+ * ntfy push (https://docs.ntfy.sh/publish/):
+ *   POST <NTFY_URL>/<NTFY_TOPIC>  Content-Type: text/plain, Title: errand-joy-bot, Markdown: no,
+ *   Authorization: Bearer <NTFY_TOKEN> (only when set); body = the message text. 10s timeout,
+ *   no redirects. `ok` only on a 2xx whose JSON body has a string `id` (the ntfy message id).
+ * Deliberately NO Click / Actions / Attach headers: those make the ntfy app or a browser fetch a URL
+ * on its own. The approval links stay plain text in the body and open only when the owner taps them.
+ * The `<...>` wrapper the DM builders put around links (it suppresses Discord previews) is removed
+ * here: ntfy has no unfurler, and a linkifier that swallowed the trailing `>` into the #fragment
+ * would corrupt the token. On ntfy.sh the topic must be at least NTFY_PUBLIC_MIN_TOPIC chars,
+ * because there the topic name is the only thing keeping strangers from reading the links.
+ * `error` is a short code only, never the text (it carries approval tokens).
+ */
+export class NtfyNotifier implements Notifier {
+  constructor(
+    private readonly baseUrl = env("NTFY_URL") ?? NTFY_DEFAULT_URL,
+    private readonly topic = env("NTFY_TOPIC") ?? "",
+    private readonly token = env("NTFY_TOKEN") ?? "",
+    private readonly fetchImpl: typeof fetch = (...a) => fetch(...a),
+  ) {}
+
+  async send(text: string): Promise<DmResult> {
+    if (!this.topic) return { ok: false, error: "notifier_unconfigured" };
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(this.topic)) return { ok: false, error: "ntfy_bad_topic" };
+    if (!isSafeEndpoint(this.baseUrl)) return { ok: false, error: "notifier_unsafe_url" };
+    const base = new URL(this.baseUrl);
+    if (base.search || base.hash) return { ok: false, error: "notifier_unsafe_url" };
+    if (base.hostname === "ntfy.sh" && this.topic.length < NTFY_PUBLIC_MIN_TOPIC) {
+      return { ok: false, error: "ntfy_topic_guessable" };
+    }
+    const headers: Record<string, string> = {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Title": "errand-joy-bot",
+      "Markdown": "no",
+    };
+    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${base.origin}${base.pathname.replace(/\/+$/, "")}/${this.topic}`, {
+        method: "POST",
+        headers,
+        body: text.replace(/<(https?:\/\/[^\s<>]+)>/g, "$1"),
+        signal: AbortSignal.timeout(DM_TIMEOUT_MS),
+        redirect: "error",
+      });
+    } catch (err) {
+      return { ok: false, error: `fetch_${err instanceof Error ? err.name : "error"}` };
+    }
+    if (!res.ok) {
+      await res.body?.cancel();
+      return { ok: false, error: `http_${res.status}` };
+    }
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      return { ok: false, error: "bad_json" };
+    }
+    const id = (body as { id?: unknown } | null)?.id;
+    if (typeof id !== "string" || id.length === 0 || id.length > 64) return { ok: false, error: "no_message_id" };
+    return { ok: true, messageId: id };
+  }
+}
+
 /** In-memory notifier for DRY_RUN and tests. `fail` makes every send fail closed. */
 export class FakeNotifier implements Notifier {
   messages: string[] = [];
@@ -110,12 +182,12 @@ export class FakeNotifier implements Notifier {
 /**
  * Transport registry: the seam for new DM channels. A transport is anything implementing `Notifier`
  * whose `send` resolves ok ONLY once the platform confirms delivery with a message id. To add one
- * (Discord bot, ntfy, Telegram, ...), write a class and register a factory here that reads its own env.
+ * (Discord bot, Telegram, ...), write a class and register a factory here that reads its own env.
  */
 export const NOTIFY_TRANSPORTS: Record<string, () => Notifier> = {
   "http-dm": () => new HttpDmNotifier(),
+  "ntfy": () => new NtfyNotifier(),
   // "discord-bot": () => new DiscordBotNotifier(),   // future
-  // "ntfy": () => new NtfyNotifier(),                 // future
   // "telegram": () => new TelegramNotifier(),         // future
 };
 
@@ -237,8 +309,9 @@ function shipLine(row: DmRow): string[] {
 
 /**
  * Ask tier: TWO links, each with its own token. The approve link can only approve and the deny
- * link can only deny, so the relay never sees the approve token unless the owner OPENS the approve
- * link (opening it to read, or a link prefetcher, already reveals it to the relay host).
+ * link can only deny. Each token sits in its link's #fragment, so opening a link (or a preview
+ * crawler fetching it) never sends a token to the relay; the approve token reaches the relay only
+ * when the owner taps Approve on the page.
  */
 export function approvalDm(
   row: DmRow,

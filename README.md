@@ -25,8 +25,9 @@ occasional sealed envelope.
 > - **Vendor terms of service.** Many retailers forbid automated or bot ordering, and
 >   accounts can be closed for it. Third-party purchasing APIs carry their own terms and
 >   risks. Reading and following each vendor's ToS is your responsibility.
-> - **Approval links are live credentials** for 24 hours. They sit in your DMs and in any
->   access log in front of the relay.
+> - **Approval links are live credentials** for 24 hours. They sit in your DMs (or your
+>   ntfy topic). Access logs in front of the relay see only the public part of the link;
+>   the token is in the `#fragment`, which browsers never send.
 > - No warranty (MIT). Start with `DRY_RUN=1` and the mock vendor, which moves no money.
 
 ## Quickstart (5 minutes, no money)
@@ -51,6 +52,11 @@ the gate with `DRY_RUN=1` and the `mock` vendor, and walks you through a first f
 purchase. It stops and asks before anything that touches the network or money: relay
 hosting, your DM transport, and going live.
 
+**Notifications without running a bot:** use `NOTIFIER=ntfy`. Install the
+[ntfy](https://ntfy.sh) app, mint a random topic (`ops/set-key.sh --generate NTFY_TOPIC`)
+and subscribe to it. On public ntfy.sh the topic name is the only secret, so keep it long
+and random, or self-host ntfy ([docs/notifiers.md](docs/notifiers.md#ntfy-shipped-recommended-zero-infra-option)).
+
 ### Manual path
 
 ```bash
@@ -59,13 +65,14 @@ cp .env.example .env && chmod 600 .env
 ops/set-key.sh --generate GATE_AGENT_TOKEN
 ops/set-key.sh --generate GATE_ADMIN_TOKEN
 ops/set-key.sh --generate RELAY_TOKEN
+ops/set-key.sh --generate NTFY_TOPIC                # then set NOTIFIER=ntfy in .env
 cp examples/config.example.toml config.toml      # read every comment
 ops/install.sh --dry && ops/install.sh --start  # tests, then a systemd unit (Linux)
 bin/buy health
 ```
 
-Then deploy the relay ([ops/relay-deploy.md](ops/relay-deploy.md)), wire up a DM
-transport ([docs/notifiers.md](docs/notifiers.md)), add the cron lines
+Then deploy the relay ([ops/relay-deploy.md](ops/relay-deploy.md)), subscribe to your
+ntfy topic or wire up another DM transport ([docs/notifiers.md](docs/notifiers.md)), add the cron lines
 ([ops/crontab.txt](ops/crontab.txt)), and follow the three-stage go-live in
 [docs/runbook.md](docs/runbook.md). Docker on Linux: `docker compose up -d --build`.
 
@@ -84,7 +91,7 @@ transport ([docs/notifiers.md](docs/notifiers.md)), add the cron lines
  │  └──┬───────────────────────────┬─────────────────────────┘ place │  + guarded())│
  │     │ DM text + links           │ push hash / pull verdicts       └──────────────┘
  │     ▼                           │
- │  notifier (http-dm) ─────────────────────────────────────────▶ owner's DMs
+ │  notifier (ntfy / http-dm) ──────────────────────────────────▶ owner's DMs
  │                                 │                                   │ tap
  └─────────────────────────────────┼───────────────────────────────────┼──────────
                                    ▼                                   ▼
@@ -172,12 +179,21 @@ Agents hold only `GATE_AGENT_TOKEN` and submit a `PurchaseRequest` (`gate/types.
   host is compromised.
 - **The gate is private.** Loopback only, systemd-hardened, with a Deno `--allow-net`
   allowlist of exactly the notifier, the relay and your vendors' API hosts.
-- **The relay is keyless.** It stores token hashes and verdicts, nothing else, and never
-  calls the gate. A compromised relay can deny things but cannot forge an approve.
+- **The relay is keyless.** It stores token hashes, public link ids and verdicts, and
+  never calls the gate. A compromised relay can always deny, but it cannot forge an
+  approve: it can only pass along an approve token you yourself tapped.
 - **Approve needs the tapped token.** The gate accepts an approve only if it carries the
   plaintext token from your DM and that token hashes to the record the gate minted.
   Approve and Deny are separate links with separate tokens; Deny and veto tokens can never
-  approve. Opening a link does nothing; only the button does.
+  approve.
+- **Tokens never travel in a URL request.** A link is `/a/<lookupId>#<token>`. Browsers
+  don't send the `#fragment`, so link unfurlers, phone previews and access logs see only
+  the lookupId, which can't approve anything. Opening a link does nothing; a small script
+  on the page moves the token into the form, and only the button sends it (POST body).
+  Without JavaScript the page refuses to confirm. Residual: a relay that is compromised
+  *and actively serving a modified page* when you open an Approve link could read the
+  token from the fragment, so read the amount in your DM before tapping (see the
+  [threat model](docs/threat-model.md#3-relay-compromise-or-leaked-relay_token)).
 - **Fail closed.** No delivered DM, no purchase. Relay down, no approvals. Invalid
   config, no start. Nightly reconcile against the vendor's charge list trips STOP on any
   charge the ledger doesn't know.
@@ -202,7 +218,7 @@ Full guide: [docs/vendors.md](docs/vendors.md).
 
 ◆ **Vendor adapters:** Zinc (retail), Mouser (electronics), Lob and Stannp (physical
 mail; always `others`), Tree-Nation (trees; `world`), SkyFi (satellite imagery; `world`).
-◆ **Notifiers:** `discord-bot`, `ntfy`, `telegram`, alongside the generic `http-dm`.
+◆ **Notifiers:** `discord-bot`, `telegram`, alongside the shipped `ntfy` and generic `http-dm`.
 ◇ Joy-budget taste learning from delivery ratings.
 ◇ A spend dashboard read from the ledger.
 

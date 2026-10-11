@@ -8,6 +8,53 @@ stops (and after 24h the gate trips STOP).
 Pick one with `NOTIFIER` in `.env`. With `DRY_RUN=1` an in-memory notifier is always
 used and nothing is sent.
 
+| `NOTIFIER` | Use it when | You need |
+|---|---|---|
+| `ntfy` | you want zero infrastructure (recommended to start) | the ntfy phone app and a random topic |
+| `http-dm` (default) | you already run a bot that can DM you | an endpoint that returns a message id |
+
+## `ntfy` (shipped, recommended zero-infra option)
+
+Push notifications through [ntfy](https://ntfy.sh): the public `ntfy.sh` server or one
+you host yourself. No bot, no account required.
+
+```
+POST ${NTFY_URL:-https://ntfy.sh}/$NTFY_TOPIC
+Content-Type: text/plain; charset=utf-8
+Title: errand-joy-bot
+Markdown: no
+Authorization: Bearer $NTFY_TOKEN          (only when NTFY_TOKEN is set)
+
+<the message text>
+```
+
+- **Success** = a 2xx response whose JSON body has a string `id` (ntfy's message id).
+  Anything else is a failure and is retried on the next tick. 10 second timeout,
+  redirects refused.
+- `NTFY_URL` must be `https://`, or plain `http://` only on loopback (a self-hosted ntfy
+  on the same box). `ops/install.sh` and the Docker entrypoint add its host (default
+  `ntfy.sh`) to the gate's `--allow-net`.
+- No `Click`, `Actions` or `Attach` headers are ever sent: they would make the ntfy app or
+  a browser fetch a URL on its own. The approval links are plain text in the body and
+  open only when you tap them. (The `<...>` wrapper used for Discord is dropped, since
+  ntfy has no link previews and a stray `>` would end up inside the link.)
+
+> **On public ntfy.sh the topic name is the secret.** Anyone who knows or guesses it can
+> subscribe and read your approval links. Use a long random topic (the gate refuses one
+> shorter than 24 characters on `ntfy.sh`), never a word like `alerts`:
+>
+> ```
+> ops/set-key.sh --generate NTFY_TOPIC      # 43 random characters, printed only as ...last4
+> ```
+>
+> Then copy it into the ntfy app's "subscribe to topic" without displaying it, e.g.
+> `grep '^NTFY_TOPIC=' .env | cut -d= -f2- | tr -d '\n' | pbcopy` (macOS). Better still,
+> **self-host ntfy** (or reserve the topic with an access token on a server that supports
+> it) and set `NTFY_URL` and `NTFY_TOKEN`; then a leaked topic name alone reads nothing.
+> ntfy.sh also caches messages for a while (12 hours by default) so phones can catch up,
+> and a subscriber sees the full links, tokens included. Links are single-use and expire
+> after 24h, but treat the topic like a password.
+
 ## `http-dm` (shipped)
 
 A generic "POST JSON, get a message id back" transport. Point it at any small service
@@ -37,8 +84,9 @@ Your endpoint must:
 4. Not log message bodies. **DMs contain live approval links** (single-use, 24h). Treat
    the endpoint's logs and the chat history like a password manager's clipboard.
 5. Suppress link previews if the platform supports it (the gate wraps URLs in `<...>`,
-   which Discord honours), so the platform's crawler doesn't fetch the approval page.
-   Fetching the page is harmless (GET performs zero writes), but it is a needless leak.
+   which Discord honours). A crawler that does fetch the page learns nothing it can use:
+   links are `/a/<lookupId>#<token>`, the token is in the `#fragment` that HTTP clients
+   never send, and GET performs zero writes. It is still a needless request.
 
 A minimal endpoint is a few dozen lines in any language: verify the token, call your chat
 platform's "send direct message" API, return `{"messageId": "<id>"}`.
@@ -72,7 +120,6 @@ Rules for a transport:
 | Name | Idea | Delivery confirmation |
 |---|---|---|
 | `discord-bot` | the gate talks to the Discord API directly with a bot token, opening a DM channel to the owner | message object id |
-| `ntfy` | push via an ntfy server you control (self-hosted or a private topic) | response `id` |
 | `telegram` | Bot API `sendMessage` to the owner's chat id | `message_id` |
 
 Whatever the transport, keep the DM private to the owner. A shared channel turns every

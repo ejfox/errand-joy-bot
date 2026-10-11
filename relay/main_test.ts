@@ -21,8 +21,9 @@ Deno.env.set("RELAY_TOKEN", RELAY_TOKEN);
 Deno.env.set("RELAY_STORE", "sqlite");
 for (const k of ["RELAY_IP_HEADER", "RELAY_MAX_CENTS", "RELAY_TIMEZONE"]) Deno.env.delete(k);
 
-const { default: app, _resetRateLimit } = await import("./main.ts");
+const { default: app, _resetRateLimit, SCRIPT_HASH_SOURCE } = await import("./main.ts");
 const { openStore, closeStore } = await import("./store.ts");
+const { TOKEN_SCRIPT } = await import("./page.ts");
 type RelayStore = import("./store.ts").RelayStore;
 
 const BASE = "http://relay.test";
@@ -30,24 +31,30 @@ let ipSeq = 0;
 /** Fresh IP per request so the rate-limit buckets never interfere. */
 const freshIp = () => `10.${Math.floor(++ipSeq / 62500) % 250}.${Math.floor(ipSeq / 250) % 250}.${ipSeq % 250}`;
 
-function mintToken(): string {
-  const b = crypto.getRandomValues(new Uint8Array(32));
+function b64url(n: number): string {
+  const b = crypto.getRandomValues(new Uint8Array(n));
   return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+const mintToken = () => b64url(32); // 43 chars, like the gate
+const mintLookup = () => b64url(16); // 22 chars, like the gate
 async function sha256Hex(s: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
 }
+/** One link from the owner's message: /a/<id>#<token>. */
+type Link = { id: string; token: string };
 let idSeq = 0;
-/** A record with its two plaintext tokens. Veto records get no approve hash. */
+/** A record with its two links (public lookupId + plaintext token). Veto records get no approve link. */
 async function record(over: Record<string, unknown> = {}) {
-  const approve = mintToken();
-  const deny = mintToken();
+  const approve: Link = { id: mintLookup(), token: mintToken() };
+  const deny: Link = { id: mintLookup(), token: mintToken() };
   const rec: Record<string, unknown> = {
     approvalId: `ap_${++idSeq}_${crypto.randomUUID().slice(0, 8)}`,
     requestId: `req_${idSeq}`,
-    denyTokenHash: await sha256Hex(deny),
-    approveTokenHash: await sha256Hex(approve),
+    denyTokenHash: await sha256Hex(deny.token),
+    approveTokenHash: await sha256Hex(approve.token),
+    denyLookupId: deny.id,
+    approveLookupId: approve.id,
     vendor: "mouser",
     boundCents: 12_345,
     kind: "approve",
@@ -56,6 +63,7 @@ async function record(over: Record<string, unknown> = {}) {
     ...over,
   };
   if (rec.kind === "veto" && !("approveTokenHash" in over)) delete rec.approveTokenHash;
+  if (rec.kind === "veto" && !("approveLookupId" in over)) delete rec.approveLookupId;
   return { rec, approve, deny };
 }
 function publish(rec: unknown, auth = `Bearer ${RELAY_TOKEN}`) {
@@ -74,15 +82,20 @@ async function published(over: Record<string, unknown> = {}) {
   await res.body?.cancel();
   return r;
 }
-function view(token: string, ip = freshIp(), method = "GET") {
-  return app.fetch(new Request(`${BASE}/a/${token}`, { method, headers: { "cf-connecting-ip": ip } }));
+/** GET the link the way a browser does: the #fragment is never part of the request. */
+function view(link: Link | string, ip = freshIp(), method = "GET") {
+  const id = typeof link === "string" ? link : link.id;
+  return app.fetch(new Request(`${BASE}/a/${id}`, { method, headers: { "cf-connecting-ip": ip } }));
 }
-function tap(token: string, action: string, bodyToken = token, ip = freshIp()) {
+/** POST a tap: the link's lookupId in the path, its token (from the fragment) in the body. */
+function tap(link: Link | string, action: string, bodyToken?: string, ip = freshIp()) {
+  const id = typeof link === "string" ? link : link.id;
+  const token = bodyToken ?? (typeof link === "string" ? "" : link.token);
   return app.fetch(
-    new Request(`${BASE}/a/${token}/${action}`, {
+    new Request(`${BASE}/a/${id}/${action}`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": ip },
-      body: new URLSearchParams({ token: bodyToken }).toString(),
+      body: new URLSearchParams({ token }).toString(),
     }),
   );
 }
@@ -124,6 +137,13 @@ function assertSecurityHeaders(res: Response, label: string) {
   assert(csp.includes("default-src 'none'"), label);
   assert(csp.includes("style-src 'unsafe-inline'"), label);
   assert(csp.includes("form-action 'self'"), label);
+  assertEquals(scriptSrc(csp), [SCRIPT_HASH_SOURCE], label);
+}
+
+/** The tokens of the CSP's script-src directive. */
+function scriptSrc(csp: string): string[] {
+  const d = csp.split(";").map((s) => s.trim()).find((s) => s.startsWith("script-src "));
+  return d ? d.split(/\s+/).slice(1) : [];
 }
 
 const NEUTRAL_TEXT = "This link is no longer valid";
@@ -140,23 +160,64 @@ function suite(t: T) {
     assert(html.includes("$123.45"));
     assert(html.includes("mouser"));
     assert(html.includes("ESP32-S3"));
-    assert(html.includes(`action="/a/${approve}/approve"`));
+    assert(html.includes(`action="/a/${approve.id}/approve"`));
     assert(!html.includes("/deny"), "approve page has no deny form");
-    assert(!html.includes(deny), "approve page never shows the deny token");
+    assert(!html.includes(deny.id), "approve page never shows the deny link");
     assert(html.includes("Deny link from your message"));
     assert(html.includes('name="robots" content="noindex,nofollow"'));
     const dres = await view(deny);
     assertEquals(dres.status, 200);
     const dhtml = await dres.text();
-    assert(dhtml.includes(`action="/a/${deny}/deny"`));
+    assert(dhtml.includes(`action="/a/${deny.id}/deny"`));
     assert(!dhtml.includes("/approve"), "deny page has no approve form");
-    assert(!dhtml.includes(approve));
+    assert(!dhtml.includes(approve.id));
     // HEAD and repeated GETs (prefetchers) too
     await (await view(approve, freshIp(), "HEAD")).body?.cancel();
     await (await view(deny, freshIp(), "HEAD")).body?.cancel();
     await (await view(approve)).body?.cancel();
     assertEquals(await rows(), before);
     assertEquals((await (await store()).findByHash(rec.approveTokenHash as string))?.approval.usedAt, null);
+  });
+
+  t("GET HTML never contains the token; empty field, disabled button, one hashed script", async () => {
+    const { approve, deny } = await published();
+    for (const link of [approve, deny]) {
+      const html = await (await view(link)).text();
+      assert(!html.includes(approve.token) && !html.includes(deny.token), "no token anywhere in the page");
+      assert(html.includes(`<input type="hidden" name="token" value="">`), "token field starts empty");
+      assert(/<button [^>]*type="submit" disabled>/.test(html), "button disabled until the script runs");
+      assert(html.includes("needs JavaScript"), "no-JS fallback says JS is needed");
+      const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+      assertEquals(scripts, [TOKEN_SCRIPT], "exactly one inline script, byte-identical to TOKEN_SCRIPT");
+    }
+    for (const t of [approve.token, deny.token]) {
+      assert(!JSON.stringify(await rows()).includes(t), "no plaintext token stored before a tap");
+    }
+  });
+
+  t("GET with only the lookupId works; the old /a/<token> form is a neutral 404", async () => {
+    const { approve, deny } = await published();
+    for (const link of [approve, deny]) {
+      const ok = await view(link.id);
+      assertEquals(ok.status, 200);
+      await ok.body?.cancel();
+      const old = await view(link.token);
+      assertEquals(old.status, 404, "a token in the path is not a lookupId");
+      assert((await old.text()).includes(NEUTRAL_TEXT));
+    }
+  });
+
+  t("CSP: script-src is exactly the sha256 of TOKEN_SCRIPT; no 'unsafe-inline' for scripts", async () => {
+    const { approve } = await published();
+    const res = await view(approve);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    await res.body?.cancel();
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(TOKEN_SCRIPT));
+    const expected = `'sha256-${btoa(String.fromCharCode(...new Uint8Array(digest)))}'`;
+    assertEquals(scriptSrc(csp), [expected]);
+    assert(!scriptSrc(csp).includes("'unsafe-inline'"));
+    assert(!/script-src[^;]*unsafe/.test(csp));
+    assert(csp.includes("default-src 'none'") && csp.includes("form-action 'self'"));
   });
 
   t("approve flow: first pull carries the approve token once; second pull does not", async () => {
@@ -167,11 +228,11 @@ function suite(t: T) {
     assert((await res.text()).includes("Approved"));
     const first = (await pull(since)).find((v) => v.approvalId === rec.approvalId);
     assertEquals(first?.verdict, "approve");
-    assertEquals(first?.token, approve, "proof token is the approve token");
+    assertEquals(first?.token, approve.token, "proof token is the approve token");
     const second = (await pull(since)).find((v) => v.approvalId === rec.approvalId);
     assertEquals(second?.verdict, "approve");
     assert(second && !("token" in second), "token returned at most once");
-    assert(!JSON.stringify(await rows()).includes(approve), "proof token deleted after pull");
+    assert(!JSON.stringify(await rows()).includes(approve.token), "proof token deleted after pull");
     // the deny link is dead too (single use per record)
     const d = await tap(deny, "deny");
     assertEquals(d.status, 404);
@@ -192,7 +253,7 @@ function suite(t: T) {
     assertEquals(mine?.verdict, "deny");
     assert(mine && !("token" in mine));
     const s = JSON.stringify(await rows());
-    assert(!s.includes(deny) && !s.includes(approve), "no plaintext stored on deny");
+    assert(!s.includes(deny.token) && !s.includes(approve.token), "no plaintext stored on deny");
     // the approve link is now dead
     const a = await tap(approve, "approve");
     assertEquals(a.status, 404);
@@ -204,14 +265,14 @@ function suite(t: T) {
     const s = await store();
     assertEquals(await s.upsert(rec as never, new Date()), "stored");
     const tapAt = new Date(Date.now() - 25 * 3600_000);
-    assertEquals(await s.tap(rec.approveTokenHash as string, "approve", tapAt, approve), "ok");
+    assertEquals(await s.tap(approve.id, rec.approveTokenHash as string, "approve", tapAt, approve.token), "ok");
     const mine = (await pull(new Date(0).toISOString())).find((v) => v.approvalId === rec.approvalId);
     assertEquals(mine?.verdict, "approve");
     assert(mine && !("token" in mine), "stale proof token not returned");
-    assert(!JSON.stringify(await rows()).includes(approve), "stale proof token purged");
+    assert(!JSON.stringify(await rows()).includes(approve.token), "stale proof token purged");
   });
 
-  t("wrong link: deny token on /approve and approve token on /deny are refused, nothing consumed", async () => {
+  t("wrong link: deny link on /approve and approve link on /deny are refused, nothing consumed", async () => {
     const { approve, deny, rec } = await published();
     const before = await rows();
     const r1 = await tap(deny, "approve");
@@ -239,8 +300,8 @@ function suite(t: T) {
     await s.upsert(r2.rec as never, new Date());
     const now = new Date();
     const res = await Promise.all([
-      s.tap(r2.rec.approveTokenHash as string, "approve", now, r2.approve),
-      s.tap(r2.rec.approveTokenHash as string, "approve", now, r2.approve),
+      s.tap(r2.approve.id, r2.rec.approveTokenHash as string, "approve", now, r2.approve.token),
+      s.tap(r2.approve.id, r2.rec.approveTokenHash as string, "approve", now, r2.approve.token),
     ]);
     assertEquals(res.sort(), ["gone", "ok"]);
     assert((await s.findByHash(rec.denyTokenHash as string))?.approval.usedAt !== null);
@@ -269,23 +330,33 @@ function suite(t: T) {
     assertNotEquals(row?.summary, "changed");
   });
 
-  t("re-publishing with new hashes replaces the old hash index", async () => {
+  t("re-publishing with new hashes and lookupIds replaces the old index", async () => {
     const old = await published();
     const fresh = await record();
     const res = await publish({
       ...old.rec,
       denyTokenHash: fresh.rec.denyTokenHash,
       approveTokenHash: fresh.rec.approveTokenHash,
+      denyLookupId: fresh.rec.denyLookupId,
+      approveLookupId: fresh.rec.approveLookupId,
     });
     assertEquals(res.status, 200);
     await res.body?.cancel();
-    for (const tok of [old.approve, old.deny]) {
-      const r = await view(tok);
+    for (const link of [old.approve, old.deny]) {
+      const r = await view(link);
       assertEquals(r.status, 404);
       await r.body?.cancel();
     }
-    // the old hashes are free again: another record may use them
-    const reuse = await publish({ ...(await record()).rec, denyTokenHash: old.rec.denyTokenHash });
+    // the old link tokens can't tap through the new links either
+    const stale = await tap(fresh.approve, "approve", old.approve.token);
+    assertEquals(stale.status, 403);
+    await stale.body?.cancel();
+    // the old hashes and lookupIds are free again: another record may use them
+    const reuse = await publish({
+      ...(await record()).rec,
+      denyTokenHash: old.rec.denyTokenHash,
+      denyLookupId: old.rec.denyLookupId,
+    });
     assertEquals(reuse.status, 200);
     await reuse.body?.cancel();
     const ok = await tap(fresh.approve, "approve");
@@ -293,24 +364,38 @@ function suite(t: T) {
     await ok.body?.cancel();
   });
 
-  t("token/body mismatch → 403, no write", async () => {
-    const { approve } = await published();
+  t("POST with the wrong token for a valid lookupId → 403, nothing consumed", async () => {
+    const { approve, deny, rec } = await published();
     const before = await rows();
-    const res = await tap(approve, "approve", mintToken());
-    assertEquals(res.status, 403);
-    await res.body?.cancel();
-    const empty = await tap(approve, "approve", "");
-    assertEquals(empty.status, 403);
-    await empty.body?.cancel();
-    assertEquals(await rows(), before);
+    const cases: Array<[Link, string, string]> = [
+      [approve, "approve", mintToken()], // random
+      [approve, "approve", deny.token], // the record's other token
+      [approve, "approve", ""], // no JS: the field stayed empty
+      [approve, "approve", "short"], // malformed
+      [deny, "deny", mintToken()],
+      [deny, "deny", approve.token],
+      [deny, "deny", ""],
+    ];
+    for (const [link, action, body] of cases) {
+      const res = await tap(link, action, body);
+      assertEquals(res.status, 403, `${action} with ${body.length}-char token`);
+      assert((await res.text()).includes("could not be verified"));
+    }
+    assertEquals(await rows(), before, "nothing written");
+    assertEquals((await (await store()).findByLookupId(approve.id))?.approval.usedAt, null);
+    // the right token still works afterwards
+    const ok = await tap(approve, "approve");
+    assertEquals(ok.status, 200);
+    await ok.body?.cancel();
+    assertEquals((await (await store()).findByHash(rec.denyTokenHash as string))?.approval.verdict, "approve");
   });
 
   t("veto: deny link shows Veto only; no approve link exists; approve refused; deny works", async () => {
     const { deny, rec } = await published({ kind: "veto", summary: "robot spent $23 on something" });
-    assert(!("approveTokenHash" in rec));
+    assert(!("approveTokenHash" in rec) && !("approveLookupId" in rec));
     const page = await (await view(deny)).text();
     assert(!page.includes("/approve"));
-    assert(page.includes(`/a/${deny}/deny`));
+    assert(page.includes(`/a/${deny.id}/deny`));
     assert(page.includes("Veto this purchase"));
     const before = await rows();
     const res = await tap(deny, "approve");
@@ -328,10 +413,12 @@ function suite(t: T) {
     const { deny: used, approve: usedApprove } = await published();
     await (await tap(used, "deny")).body?.cancel();
     const bodies: string[] = [];
-    for (const t of [expired, mintToken(), used, usedApprove, "short", "%3Cscript%3E", "a".repeat(400)]) {
+    for (
+      const t of [expired, mintLookup(), mintToken(), used, usedApprove, "short", "%3Cscript%3E", "a".repeat(400)]
+    ) {
       const res = await view(t);
-      assertEquals(res.status, 404, t);
-      assertSecurityHeaders(res, `neutral ${t}`);
+      assertEquals(res.status, 404, String(t));
+      assertSecurityHeaders(res, `neutral ${String(t)}`);
       bodies.push(await res.text());
     }
     assert(bodies[0].includes(NEUTRAL_TEXT));
@@ -350,19 +437,19 @@ function suite(t: T) {
       ["random 404", app.fetch(new Request(`${BASE}/wp-admin.php`))],
       [
         "GET approve 405",
-        app.fetch(new Request(`${BASE}/a/${approve}/approve`, { headers: { "cf-connecting-ip": freshIp() } })),
+        app.fetch(new Request(`${BASE}/a/${approve.id}/approve`, { headers: { "cf-connecting-ip": freshIp() } })),
       ],
       [
         "HEAD deny 405",
         app.fetch(
-          new Request(`${BASE}/a/${deny}/deny`, { method: "HEAD", headers: { "cf-connecting-ip": freshIp() } }),
+          new Request(`${BASE}/a/${deny.id}/deny`, { method: "HEAD", headers: { "cf-connecting-ip": freshIp() } }),
         ),
       ],
       ["internal 401", app.fetch(new Request(`${BASE}/internal/verdicts`))],
       [
         "413",
         app.fetch(
-          new Request(`${BASE}/a/${deny}/deny`, {
+          new Request(`${BASE}/a/${deny.id}/deny`, {
             method: "POST",
             headers: { "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": freshIp() },
             body: "token=" + "x".repeat(5000),
@@ -376,12 +463,12 @@ function suite(t: T) {
       await res.body?.cancel();
     }
     const r405 = await app.fetch(
-      new Request(`${BASE}/a/${approve}/approve`, { headers: { "cf-connecting-ip": freshIp() } }),
+      new Request(`${BASE}/a/${approve.id}/approve`, { headers: { "cf-connecting-ip": freshIp() } }),
     );
     assertEquals(r405.status, 405);
     await r405.body?.cancel();
     const r413 = await app.fetch(
-      new Request(`${BASE}/a/${deny}/deny`, {
+      new Request(`${BASE}/a/${deny.id}/deny`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": freshIp() },
         body: "token=" + "x".repeat(5000),
@@ -434,6 +521,13 @@ function suite(t: T) {
       ["bad approve hash", { approveTokenHash: "Z".repeat(64) }],
       ["equal hashes", { denyTokenHash: h, approveTokenHash: h }],
       ["veto with approve hash", { kind: "veto", approveTokenHash: h }],
+      ["missing deny lookupId", { denyLookupId: undefined }],
+      ["bad deny lookupId", { denyLookupId: "has/slash-and-is-long-enough" }],
+      ["short deny lookupId", { denyLookupId: "abc" }],
+      ["missing approve lookupId", { approveLookupId: undefined }],
+      ["bad approve lookupId", { approveLookupId: "x".repeat(65) }],
+      ["equal lookupIds", { denyLookupId: "sameLookupIdForBoth_00", approveLookupId: "sameLookupIdForBoth_00" }],
+      ["veto with approve lookupId", { kind: "veto", approveLookupId: mintLookup() }],
       ["old single tokenHash", { tokenHash: h }],
       ["unknown key", { evil: 1 }],
       ["empty summary", { summary: "" }],
@@ -466,6 +560,10 @@ function suite(t: T) {
         ["same approve", { approveTokenHash: rec.approveTokenHash }],
         ["deny = their approve", { denyTokenHash: rec.approveTokenHash }],
         ["approve = their deny", { approveTokenHash: rec.denyTokenHash }],
+        ["same deny lookupId", { denyLookupId: rec.denyLookupId }],
+        ["same approve lookupId", { approveLookupId: rec.approveLookupId }],
+        ["deny lookupId = their approve", { denyLookupId: rec.approveLookupId }],
+        ["approve lookupId = their deny", { approveLookupId: rec.denyLookupId }],
       ] as const
     ) {
       const dup = await publish({ ...other, ...over });
@@ -537,12 +635,12 @@ function suite(t: T) {
     await blocked.body?.cancel();
     // POSTs from the same IP are blocked too, without writing
     const before = await rows();
-    const t = await tap(approve, "approve", approve, ip);
+    const t = await tap(approve, "approve", approve.token, ip);
     assertEquals(t.status, 429);
     await t.body?.cancel();
     assertEquals(await rows(), before);
     // ...but a deny is never blocked (fail-safe direction for veto links)
-    const d = await tap(deny, "deny", deny, ip);
+    const d = await tap(deny, "deny", deny.token, ip);
     assertEquals(d.status, 200);
     await d.body?.cancel();
     const { approve: token2 } = await published();
@@ -601,7 +699,7 @@ function suite(t: T) {
       const blocked = await view(approve, freshIp());
       assertEquals(blocked.status, 429);
       await blocked.body?.cancel();
-      const d = await tap(deny, "deny", deny, freshIp());
+      const d = await tap(deny, "deny", deny.token, freshIp());
       assertEquals(d.status, 200);
       await d.body?.cancel();
       _resetRateLimit();
@@ -614,12 +712,15 @@ function suite(t: T) {
     for (let i = 0; i < 3; i++) {
       const dh = (i + 1).toString(16).padStart(64, "0");
       const ah = (i + 101).toString(16).padStart(64, "0");
+      const dl = mintLookup();
       assertEquals(
         await s.upsert({
           approvalId: `tie_${i}`,
           requestId: "r",
           denyTokenHash: dh,
           approveTokenHash: ah,
+          denyLookupId: dl,
+          approveLookupId: mintLookup(),
           vendor: "v",
           boundCents: 1,
           kind: "approve",
@@ -628,7 +729,7 @@ function suite(t: T) {
         }, at),
         "stored",
       );
-      assertEquals(await s.tap(dh, "deny", at), "ok");
+      assertEquals(await s.tap(dl, dh, "deny", at), "ok");
     }
     const page = (await s.verdictsSince(new Date(0).toISOString(), { limit: 2, now: at }))
       .filter((v) => v.approvalId.startsWith("tie_"));
@@ -668,6 +769,32 @@ Deno.test("bad RELAY_STORE fails closed: 503 on every route", async () => {
     }
   } finally {
     Deno.env.set("RELAY_STORE", "sqlite");
+    await closeStore();
+  }
+});
+
+Deno.test("[sqlite] a pre-lookupId database is set aside as approvals_legacy_v2, never dropped", async () => {
+  const dir = Deno.makeTempDirSync({ dir: DATA, prefix: "legacy-" });
+  const { DatabaseSync } = await import("node:sqlite");
+  const old = new DatabaseSync(`${dir}/relay.db`);
+  old.exec(`CREATE TABLE approvals (approval_id TEXT PRIMARY KEY, request_id TEXT NOT NULL,
+              deny_token_hash TEXT NOT NULL UNIQUE, approve_token_hash TEXT UNIQUE, vendor TEXT NOT NULL,
+              bound_cents INTEGER NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, expires_at TEXT NOT NULL,
+              used_at TEXT, verdict TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE INDEX approvals_used_at ON approvals(used_at);
+            INSERT INTO approvals VALUES ('old1','r','${"a".repeat(64)}',NULL,'v',1,'veto','s',
+              '2030-01-01T00:00:00.000Z',NULL,NULL,'x','x');`);
+  old.close();
+  const s = await openStore({ backend: "sqlite", dataDir: dir });
+  try {
+    const { rec, deny } = await record();
+    assertEquals(await s.upsert(rec as never, new Date()), "stored");
+    assertEquals((await s.findByLookupId(deny.id))?.role, "deny");
+    const check = new DatabaseSync(`${dir}/relay.db`);
+    const legacy = check.prepare(`SELECT approval_id FROM approvals_legacy_v2`).all();
+    check.close();
+    assertEquals(legacy.map((r) => (r as { approval_id: string }).approval_id), ["old1"]);
+  } finally {
     await closeStore();
   }
 });

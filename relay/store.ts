@@ -4,6 +4,9 @@
 //   - KvStore:     Deno KV via Deno.openKv(path?) (Deno Deploy, which has no writable disk)
 // Every record has a deny-token hash and (kind=approve only) an approve-token hash; each link
 // in the owner's message carries exactly one token, and each token does exactly one thing.
+// Links look like /a/<lookupId>#<token>: the relay sees the public lookupId on every request
+// and the token only in the POST body of a tap. Records are found by lookupId; a tap must
+// present the token whose hash is stored for that lookupId's role.
 // Records hold token HASHES only. The one exception is the proof-of-tap token: the plaintext
 // APPROVE token submitted with an approve tap is kept until the gate pulls it (returned once)
 // or for at most PROOF_TTL_MS after the tap, whichever comes first.
@@ -15,6 +18,8 @@ export interface ApprovalRecord {
   requestId: string;
   denyTokenHash: string;
   approveTokenHash?: string;
+  denyLookupId: string;
+  approveLookupId?: string;
   vendor: string;
   boundCents: number;
   kind: "approve" | "veto";
@@ -40,6 +45,8 @@ export interface StoredApproval {
   requestId: string;
   denyTokenHash: string;
   approveTokenHash: string | null;
+  denyLookupId: string;
+  approveLookupId: string | null;
   vendor: string;
   boundCents: number;
   kind: "approve" | "veto";
@@ -49,33 +56,42 @@ export interface StoredApproval {
   verdict: "approve" | "deny" | null;
 }
 
-/** Which link a token belongs to: it may only perform that action. */
+/** Which link a token or lookupId belongs to: it may only perform that action. */
 export type Role = "approve" | "deny";
 export interface Found {
   approval: StoredApproval;
   role: Role;
 }
 
+/** hash_conflict: a token hash or lookupId is already owned by another approvalId. */
 export type UpsertResult = "stored" | "already_decided" | "hash_conflict";
-/** wrong_link: a live record's token was posted to the other action; nothing was written. */
-export type TapResult = "ok" | "gone" | "wrong_link";
+/**
+ * wrong_link: the lookupId belongs to the other action; bad_token: the token does not hash to the
+ * one stored for this lookupId. Neither writes anything.
+ */
+export type TapResult = "ok" | "gone" | "wrong_link" | "bad_token";
 export type Backend = "sqlite" | "kv";
 
 export interface RelayStore {
   readonly backend: Backend;
   /** Read-only lookup of a token hash against both the deny and approve hashes. Never writes. */
   findByHash(tokenHash: string): Promise<Found | null>;
+  /** Read-only lookup of a link's public lookupId (deny or approve). Never writes. */
+  findByLookupId(lookupId: string): Promise<Found | null>;
   /**
    * Upsert a record pushed by the gate. A tapped record is frozen ("already_decided"); either
-   * hash already used by another approvalId is "hash_conflict". Client usedAt/verdict are ignored.
+   * hash or either lookupId already used by another approvalId is "hash_conflict". Client
+   * usedAt/verdict are ignored.
    */
   upsert(a: ApprovalRecord, now: Date): Promise<UpsertResult>;
   /**
-   * Single-use tap (per record): unused, unexpired, and the token must be the one for this
-   * action (approve token → approve, deny token → deny). Either successful tap consumes the
-   * record. On approve, `proofToken` (the plaintext approve token) is stored for the gate.
+   * Single-use tap (per record) through the link `lookupId`: the record must be unused and
+   * unexpired, the lookupId must be the one for this action (approve link → approve, deny link →
+   * deny), and `tokenHash` must equal the hash stored for that link. Either successful tap
+   * consumes the record. On approve, `proofToken` (the plaintext approve token) is stored for
+   * the gate.
    */
-  tap(tokenHash: string, verdict: Role, now: Date, proofToken?: string): Promise<TapResult>;
+  tap(lookupId: string, tokenHash: string, verdict: Role, now: Date, proofToken?: string): Promise<TapResult>;
   /**
    * Verdicts with used_at > since, oldest first, about `limit` per page (never splits a
    * same-millisecond group). Approve verdicts carry `token` the first time they are pulled,
@@ -137,8 +153,8 @@ interface SqlDb {
   close(): void;
 }
 
-const COLS = `approval_id, request_id, deny_token_hash, approve_token_hash, vendor, bound_cents,
-              kind, summary, expires_at, used_at, verdict`;
+const COLS = `approval_id, request_id, deny_token_hash, approve_token_hash, deny_lookup_id,
+              approve_lookup_id, vendor, bound_cents, kind, summary, expires_at, used_at, verdict`;
 
 function rowToApproval(row: Record<string, unknown>): StoredApproval {
   return {
@@ -146,6 +162,8 @@ function rowToApproval(row: Record<string, unknown>): StoredApproval {
     requestId: String(row.request_id),
     denyTokenHash: String(row.deny_token_hash),
     approveTokenHash: row.approve_token_hash == null ? null : String(row.approve_token_hash),
+    denyLookupId: String(row.deny_lookup_id),
+    approveLookupId: row.approve_lookup_id == null ? null : String(row.approve_lookup_id),
     vendor: String(row.vendor),
     boundCents: Number(row.bound_cents),
     kind: row.kind === "veto" ? "veto" : "approve",
@@ -159,6 +177,29 @@ function rowToApproval(row: Record<string, unknown>): StoredApproval {
 function roleOf(a: StoredApproval, tokenHash: string): Role | null {
   if (a.denyTokenHash === tokenHash) return "deny";
   if (a.approveTokenHash !== null && a.approveTokenHash === tokenHash) return "approve";
+  return null;
+}
+
+function roleOfLookup(a: StoredApproval, lookupId: string): Role | null {
+  if (a.denyLookupId === lookupId) return "deny";
+  if (a.approveLookupId !== null && a.approveLookupId === lookupId) return "approve";
+  return null;
+}
+
+/** Constant-time equality of two hex digests (fixed length; a length mismatch is just false). */
+function hashEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Shared tap guard for both backends: which outcome a tap on `f` gets, before any write. */
+function tapCheck(f: Found | null, tokenHash: string, verdict: Role, nowIso: string): TapResult | null {
+  if (!f || f.approval.usedAt !== null || f.approval.expiresAt <= nowIso) return "gone";
+  if (f.role !== verdict || (verdict === "approve" && f.approval.kind !== "approve")) return "wrong_link";
+  const stored = verdict === "approve" ? f.approval.approveTokenHash : f.approval.denyTokenHash;
+  if (stored === null || !hashEq(stored, tokenHash)) return "bad_token";
   return null;
 }
 
@@ -179,6 +220,11 @@ export class SqliteStore implements RelayStore {
     if (cols.length > 0 && !cols.some((c) => c.name === "deny_token_hash")) {
       d.exec(`ALTER TABLE approvals RENAME TO approvals_legacy_v1;
               DROP INDEX IF EXISTS approvals_used_at;`);
+    } else if (cols.length > 0 && !cols.some((c) => c.name === "deny_lookup_id")) {
+      // A pre-fragment-link database (links were /a/<token>): its records can't be reached by the
+      // new links anyway, so it is set aside too, never dropped.
+      d.exec(`ALTER TABLE approvals RENAME TO approvals_legacy_v2;
+              DROP INDEX IF EXISTS approvals_used_at;`);
     }
     d.exec(`
       CREATE TABLE IF NOT EXISTS approvals (
@@ -186,6 +232,8 @@ export class SqliteStore implements RelayStore {
         request_id         TEXT NOT NULL,
         deny_token_hash    TEXT NOT NULL UNIQUE,
         approve_token_hash TEXT UNIQUE,
+        deny_lookup_id     TEXT NOT NULL UNIQUE,
+        approve_lookup_id  TEXT UNIQUE,
         vendor             TEXT NOT NULL,
         bound_cents        INTEGER NOT NULL,
         kind               TEXT NOT NULL CHECK (kind IN ('approve','veto')),
@@ -240,21 +288,41 @@ export class SqliteStore implements RelayStore {
     return Promise.resolve(this.#find(tokenHash));
   }
 
+  #findLookup(lookupId: string): Found | null {
+    const row = this.#db.prepare(
+      `SELECT ${COLS} FROM approvals WHERE deny_lookup_id = ? OR approve_lookup_id = ?`,
+    ).get(lookupId, lookupId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const approval = rowToApproval(row);
+    const role = roleOfLookup(approval, lookupId);
+    return role ? { approval, role } : null;
+  }
+
+  findByLookupId(lookupId: string): Promise<Found | null> {
+    return Promise.resolve(this.#findLookup(lookupId));
+  }
+
   upsert(a: ApprovalRecord, now: Date): Promise<UpsertResult> {
     const nowIso = now.toISOString();
     const d = this.#db;
     const approveHash = a.approveTokenHash ?? null;
+    const approveLookup = a.approveLookupId ?? null;
     const r = this.#tx((): UpsertResult => {
       const other = d.prepare(
         `SELECT approval_id FROM approvals
           WHERE approval_id <> ?
-            AND (deny_token_hash IN (?, ?) OR approve_token_hash IN (?, ?))`,
+            AND (deny_token_hash IN (?, ?) OR approve_token_hash IN (?, ?)
+                 OR deny_lookup_id IN (?, ?) OR approve_lookup_id IN (?, ?))`,
       ).get(
         a.approvalId,
         a.denyTokenHash,
         approveHash ?? a.denyTokenHash,
         a.denyTokenHash,
         approveHash ?? a.denyTokenHash,
+        a.denyLookupId,
+        approveLookup ?? a.denyLookupId,
+        a.denyLookupId,
+        approveLookup ?? a.denyLookupId,
       );
       if (other) return "hash_conflict";
       const existing = d.prepare(
@@ -262,14 +330,17 @@ export class SqliteStore implements RelayStore {
       ).get(a.approvalId) as { used_at: string | null } | undefined;
       if (existing && existing.used_at != null) return "already_decided";
       d.prepare(
-        `INSERT INTO approvals (approval_id, request_id, deny_token_hash, approve_token_hash, vendor,
+        `INSERT INTO approvals (approval_id, request_id, deny_token_hash, approve_token_hash,
+                                deny_lookup_id, approve_lookup_id, vendor,
                                 bound_cents, kind, summary, expires_at, used_at, verdict,
                                 created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
          ON CONFLICT(approval_id) DO UPDATE SET
            request_id = excluded.request_id,
            deny_token_hash = excluded.deny_token_hash,
            approve_token_hash = excluded.approve_token_hash,
+           deny_lookup_id = excluded.deny_lookup_id,
+           approve_lookup_id = excluded.approve_lookup_id,
            vendor = excluded.vendor,
            bound_cents = excluded.bound_cents,
            kind = excluded.kind,
@@ -282,6 +353,8 @@ export class SqliteStore implements RelayStore {
         a.requestId,
         a.denyTokenHash,
         approveHash,
+        a.denyLookupId,
+        approveLookup,
         a.vendor,
         a.boundCents,
         a.kind,
@@ -300,20 +373,22 @@ export class SqliteStore implements RelayStore {
     return Promise.resolve(r);
   }
 
-  tap(tokenHash: string, verdict: Role, now: Date, proofToken?: string): Promise<TapResult> {
+  tap(lookupId: string, tokenHash: string, verdict: Role, now: Date, proofToken?: string): Promise<TapResult> {
     const nowIso = now.toISOString();
     const d = this.#db;
     const r = this.#tx((): TapResult => {
-      const f = this.#find(tokenHash);
-      if (!f || f.approval.usedAt !== null || f.approval.expiresAt <= nowIso) return "gone";
-      if (f.role !== verdict) return "wrong_link";
+      const f = this.#findLookup(lookupId);
+      const refused = tapCheck(f, tokenHash, verdict, nowIso);
+      if (refused || !f) return refused ?? "gone";
       // The WHERE clause repeats the whole guard; BEGIN IMMEDIATE already serializes writers.
-      const col = verdict === "approve" ? "approve_token_hash" : "deny_token_hash";
+      const [lcol, hcol] = verdict === "approve"
+        ? ["approve_lookup_id", "approve_token_hash"]
+        : ["deny_lookup_id", "deny_token_hash"];
       const res = d.prepare(
         `UPDATE approvals SET used_at = ?, verdict = ?, updated_at = ?
-          WHERE ${col} = ? AND used_at IS NULL AND expires_at > ?
+          WHERE ${lcol} = ? AND ${hcol} = ? AND used_at IS NULL AND expires_at > ?
             AND (kind = 'approve' OR ? = 'deny')`,
-      ).run(nowIso, verdict, nowIso, tokenHash, nowIso, verdict);
+      ).run(nowIso, verdict, nowIso, lookupId, tokenHash, nowIso, verdict);
       if (Number(res.changes) !== 1) return "gone";
       if (verdict === "approve" && proofToken) {
         d.prepare(
@@ -390,6 +465,7 @@ export class SqliteStore implements RelayStore {
 // Keys:
 //   ["approval", approvalId]           → KvApproval
 //   ["hash", tokenHash]                → approvalId   (deny AND approve hashes are indexed)
+//   ["lookup", lookupId]               → approvalId   (deny AND approve lookupIds are indexed)
 //   ["verdict", usedAtIso, approvalId] → "approve" | "deny"   (ordered index for verdictsSince)
 //   ["proof", approvalId]              → { token, usedAt }     (expireIn PROOF_TTL_MS)
 // All keys carry expireIn (approval expiry / tap + 30 days); reads still filter, since KV
@@ -414,6 +490,27 @@ function retentionMs(a: { expiresAt: string; usedAt: string | null }, now: Date)
 function hashesOf(a: { denyTokenHash: string; approveTokenHash?: string | null }): string[] {
   return a.approveTokenHash ? [a.denyTokenHash, a.approveTokenHash] : [a.denyTokenHash];
 }
+
+/** Every index key a record owns: its token hashes and its lookupIds. */
+function indexKeysOf(a: {
+  denyTokenHash: string;
+  approveTokenHash?: string | null;
+  denyLookupId: string;
+  approveLookupId?: string | null;
+}): Deno.KvKey[] {
+  const keys: Deno.KvKey[] = hashesOf(a).map((h) => ["hash", h]);
+  keys.push(["lookup", a.denyLookupId]);
+  if (a.approveLookupId) keys.push(["lookup", a.approveLookupId]);
+  return keys;
+}
+
+function ownsIndexKey(a: StoredApproval, key: Deno.KvKey): boolean {
+  return key[0] === "hash"
+    ? roleOf(a, String(key[1])) !== null
+    : roleOfLookup(a, String(key[1])) !== null;
+}
+
+const sameKey = (x: Deno.KvKey, y: Deno.KvKey) => x[0] === y[0] && x[1] === y[1];
 
 export class KvStore implements RelayStore {
   readonly backend = "kv" as const;
@@ -445,17 +542,33 @@ export class KvStore implements RelayStore {
     return { approval, role: f.role };
   }
 
+  async #findLookup(lookupId: string): Promise<{ entry: Deno.KvEntry<KvApproval>; role: Role } | null> {
+    const l = await this.#kv.get<string>(["lookup", lookupId]);
+    if (l.value === null) return null;
+    const e = await this.#kv.get<KvApproval>(["approval", l.value]);
+    if (e.value === null) return null;
+    const role = roleOfLookup(e.value, lookupId);
+    return role ? { entry: e as Deno.KvEntry<KvApproval>, role } : null;
+  }
+
+  async findByLookupId(lookupId: string): Promise<Found | null> {
+    const f = await this.#findLookup(lookupId);
+    if (!f) return null;
+    const { createdAt: _c, updatedAt: _u, ...approval } = f.entry.value;
+    return { approval, role: f.role };
+  }
+
   async upsert(a: ApprovalRecord, now: Date): Promise<UpsertResult> {
     const nowIso = now.toISOString();
-    const newHashes = hashesOf(a);
+    const newKeys = indexKeysOf(a);
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       const apE = await this.#kv.get<KvApproval>(["approval", a.approvalId]);
-      const hashEs = await this.#kv.getMany<string[]>(newHashes.map((h) => ["hash", h]));
-      for (const [j, he] of hashEs.entries()) {
-        if (he.value === null || he.value === a.approvalId) continue;
-        // Only a conflict if the other record still exists and still owns this hash.
-        const other = await this.#kv.get<KvApproval>(["approval", he.value]);
-        if (other.value !== null && roleOf(other.value, newHashes[j]) !== null) return "hash_conflict";
+      const idxEs = await this.#kv.getMany<string[]>(newKeys);
+      for (const [j, ie] of idxEs.entries()) {
+        if (ie.value === null || ie.value === a.approvalId) continue;
+        // Only a conflict if the other record still exists and still owns this hash / lookupId.
+        const other = await this.#kv.get<KvApproval>(["approval", ie.value]);
+        if (other.value !== null && ownsIndexKey(other.value, newKeys[j])) return "hash_conflict";
       }
       const existing = apE.value;
       if (existing && existing.usedAt !== null) return "already_decided";
@@ -464,6 +577,8 @@ export class KvStore implements RelayStore {
         requestId: a.requestId,
         denyTokenHash: a.denyTokenHash,
         approveTokenHash: a.approveTokenHash ?? null,
+        denyLookupId: a.denyLookupId,
+        approveLookupId: a.approveLookupId ?? null,
         vendor: a.vendor,
         boundCents: a.boundCents,
         kind: a.kind,
@@ -475,12 +590,12 @@ export class KvStore implements RelayStore {
         updatedAt: nowIso,
       };
       const expireIn = retentionMs(rec, now);
-      const op = this.#kv.atomic().check(apE, ...hashEs)
+      const op = this.#kv.atomic().check(apE, ...idxEs)
         .set(["approval", a.approvalId], rec, { expireIn });
-      for (const h of newHashes) op.set(["hash", h], a.approvalId, { expireIn });
-      // Re-published with new hashes: drop the old index keys.
+      for (const k of newKeys) op.set(k, a.approvalId, { expireIn });
+      // Re-published with new hashes / lookupIds: drop the old index keys.
       if (existing) {
-        for (const h of hashesOf(existing)) if (!newHashes.includes(h)) op.delete(["hash", h]);
+        for (const k of indexKeysOf(existing)) if (!newKeys.some((n) => sameKey(n, k))) op.delete(k);
       }
       const res = await op.commit();
       if (res.ok) {
@@ -491,13 +606,12 @@ export class KvStore implements RelayStore {
     throw new Error("kv upsert contention");
   }
 
-  async tap(tokenHash: string, verdict: Role, now: Date, proofToken?: string): Promise<TapResult> {
+  async tap(lookupId: string, tokenHash: string, verdict: Role, now: Date, proofToken?: string): Promise<TapResult> {
     const nowIso = now.toISOString();
-    const f = await this.#find(tokenHash);
-    if (!f) return "gone";
+    const f = await this.#findLookup(lookupId);
+    const refused = tapCheck(f ? { approval: f.entry.value, role: f.role } : null, tokenHash, verdict, nowIso);
+    if (refused || !f) return refused ?? "gone";
     const a = f.entry.value;
-    if (a.usedAt !== null || a.expiresAt <= nowIso) return "gone";
-    if (f.role !== verdict || (verdict === "approve" && a.kind !== "approve")) return "wrong_link";
     const next: KvApproval = { ...a, usedAt: nowIso, verdict, updatedAt: nowIso };
     const expireIn = retentionMs(next, now);
     // The versionstamp check is the single-use guard: of two concurrent taps exactly one commits.
@@ -505,7 +619,7 @@ export class KvStore implements RelayStore {
       .check(f.entry)
       .set(["approval", a.approvalId], next, { expireIn })
       .set(["verdict", nowIso, a.approvalId], verdict, { expireIn });
-    for (const h of hashesOf(a)) op.set(["hash", h], a.approvalId, { expireIn });
+    for (const k of indexKeysOf(a)) op.set(k, a.approvalId, { expireIn });
     if (verdict === "approve" && proofToken) {
       const proof: KvProof = { token: proofToken, usedAt: nowIso };
       op.set(["proof", a.approvalId], proof, {

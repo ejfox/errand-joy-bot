@@ -19,7 +19,16 @@ GATE_PORT="${GATE_PORT:-47400}"
 [[ -f "${CONFIG_PATH:-/app/config.toml}" ]] || die "no config at ${CONFIG_PATH:-/app/config.toml}; mount your config.toml"
 
 net="$GATE_HOST:$GATE_PORT"
-for k in NOTIFY_DM_URL RELAY_URL; do
+# The notifier's host (NOTIFY_DM_URL for http-dm; NTFY_URL, default https://ntfy.sh, for ntfy) and the relay.
+case "${NOTIFIER:-http-dm}" in
+  http-dm) url_keys="NOTIFY_DM_URL RELAY_URL" ;;
+  ntfy)
+    [[ -n "${NTFY_TOPIC:-}" ]] || die "NOTIFIER=ntfy needs NTFY_TOPIC"
+    NTFY_URL="${NTFY_URL:-https://ntfy.sh}"
+    url_keys="NTFY_URL RELAY_URL" ;;
+  *) die "NOTIFIER=${NOTIFIER} is not a known transport (http-dm, ntfy)" ;;
+esac
+for k in $url_keys; do
   h="$(host_of "${!k:-}")"
   [[ -n "$h" ]] || die "$k is not set to an http(s) URL"
   net="$net,$h"

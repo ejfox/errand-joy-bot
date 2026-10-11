@@ -36,21 +36,25 @@ Check, and report versions: `deno --version` (2.6 or newer), `curl`, `jq`, `open
    ops/set-key.sh --generate GATE_ADMIN_TOKEN
    ops/set-key.sh --generate RELAY_TOKEN
    ```
-3. Non-secret values (`DATA_DIR`, `CONFIG_PATH`, `NOTIFY_DM_URL`, `NOTIFY_USER_ID`, `RELAY_URL`, `RELAY_PUBLIC_URL`) also go in through set-key so the file is never opened in chat: give the user `printf '%s\n' '<value>' | ops/set-key.sh NAME` lines with the values filled in.
+3. Non-secret values (`DATA_DIR`, `CONFIG_PATH`, `NOTIFIER`, `NTFY_URL` or `NOTIFY_DM_URL` + `NOTIFY_USER_ID`, `RELAY_URL`, `RELAY_PUBLIC_URL`) also go in through set-key so the file is never opened in chat: give the user `printf '%s\n' '<value>' | ops/set-key.sh NAME` lines with the values filled in.
 4. Leave `DRY_RUN=1`.
 
 ## 4. Notifier (the DM is the approval channel)
 
 The gate DMs the owner before anything happens and sends approval links there. It fails closed: no delivered DM, no purchase.
 
+**Offer ntfy first.** It needs no bot and no server of their own.
+
 | Transport | Status | Notes |
 |---|---|---|
+| `ntfy` | **exists, recommended** | Push to the ntfy phone app. `NOTIFIER=ntfy`. The user runs `ops/set-key.sh --generate NTFY_TOPIC` (random 43 chars, printed only as `…last4`), then copies it to the clipboard without displaying it (`grep '^NTFY_TOPIC=' .env \| cut -d= -f2- \| tr -d '\n' \| pbcopy`, or `xclip -sel c` / `wl-copy`) and subscribes to it in the ntfy app. `NTFY_URL` defaults to `https://ntfy.sh`. |
 | `http-dm` | **exists** | POSTs `{userId, message}` with a Bearer token to an endpoint you run (e.g. your own chat bot's DM route) and needs a message id back. Set `NOTIFY_DM_URL`, `NOTIFY_USER_ID`, and `NOTIFY_DM_TOKEN` (user pipes it in with set-key). |
 | `discord-bot` | planned | Not implemented yet. |
-| `ntfy` | planned | Not implemented yet. |
 | `telegram` | planned | Not implemented yet. |
 
-If they have no DM endpoint, say plainly that the gate can't approve anything live until one exists, and that a dry run still works.
+Tell them plainly, for ntfy: **on public ntfy.sh the topic name is the secret.** Anyone who knows it can read the approval links, so it must be long and random (the gate refuses a topic under 24 characters on ntfy.sh), it never goes in chat, and it is never a guessable word. If they want more than that, they can self-host ntfy and set `NTFY_URL` (https, or http on loopback) plus an access token in `NTFY_TOKEN` (piped in with set-key). Never treat the topic as a non-secret value.
+
+If they pick `http-dm` and have no DM endpoint yet, say plainly that the gate can't approve anything live until one exists, and that a dry run still works.
 
 ## 5. Approval relay (the only public piece)
 
@@ -60,7 +64,7 @@ The relay renders the one-tap Approve/Deny page. It holds no gate or vendor keys
 - **smallweb**: easiest if they already run smallweb. Drop the folder in and it's live. Make sure the relay's `data/` is gitignored in the smallweb workspace.
 - **Deno Deploy**: no server to run, but no persistent disk, so set `RELAY_STORE=kv`. Paste `RELAY_TOKEN` into its secrets UI from the clipboard.
 
-All three log request paths, which include live link tokens: warn them not to ship `/a/*` paths to third-party log services. The user moves `RELAY_TOKEN` to the relay host (clipboard or pipe, never chat). Verify with the doc's `curl -sI <relay>/a/not-a-real-token` check: a neutral 404 with `cache-control: no-store`.
+All three log request paths. Those hold only the public lookupId of each link (`/a/<lookupId>#<token>`; the token is in the `#fragment`, which is never sent), so path logs are harmless; tell them not to enable request-body logging in front of the relay, since a tap carries the token in its POST body. The user moves `RELAY_TOKEN` to the relay host (clipboard or pipe, never chat). Verify with the doc's `curl -sI <relay>/a/not-a-real-link` check: a neutral 404 with `cache-control: no-store`.
 
 ## 6. Install and start the gate
 

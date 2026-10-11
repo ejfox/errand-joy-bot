@@ -183,15 +183,20 @@ export interface Notifier {
 // ── Approvals (gate half ↔ relay) ─────────────────────────────────────────
 // Gate mints 256-bit tokens and stores only their sha256. Plaintext appears ONLY in DM URLs.
 // Two SEPARATE tokens: a deny token (every record) and an approve token (ask tier only). Each DM
-// link carries exactly one, so a deny link can never approve, and the relay never receives the
-// approve token unless the owner OPENS the approve link (opening it, or a prefetcher, is enough:
-// a compromised relay host could then approve). Deny-only use never exposes it.
+// link carries exactly one, so a deny link can never approve. A link is
+// `<RELAY_PUBLIC_URL>/a/<lookupId>#<token>`: the lookupId is a random public id that only selects
+// the record (it cannot approve), and the token sits in the URL fragment, which browsers never send
+// to servers. Opening a link (or a link unfurler / prefetcher fetching it) therefore never gives the
+// relay a token; the approve token reaches the relay only in the POST body when the owner taps
+// Approve. Deny-only use never exposes it.
 // Gate PUSHES the record (hashes, no tokens) to the relay and PULLS verdicts. Relay never calls the gate.
 export interface ApprovalRecord {
   approvalId: string;
   requestId: string;
   denyTokenHash: string; // hex sha256 of the deny-link token (every kind)
   approveTokenHash?: string; // hex sha256 of the approve-link token; present iff kind === "approve"
+  denyLookupId: string; // public id in the deny link's path (every kind); useless for approving
+  approveLookupId?: string; // public id in the approve link's path; present iff kind === "approve"
   vendor: string;
   boundCents: number; // quoted total at mint time; a re-quote invalidates
   kind: "approve" | "veto"; // approve = ask tier; veto = deny-only link for auto / fund_auto / joy

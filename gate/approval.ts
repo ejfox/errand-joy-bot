@@ -1,6 +1,7 @@
 // WP3 · approval tokens (gate half).
 // The gate mints a 256-bit token, stores ONLY sha256(token), and puts the plaintext in exactly one
-// place: the DM URL. Nothing here logs, and nothing here persists the plaintext.
+// place: the FRAGMENT of the DM URL (`/a/<lookupId>#<token>`), which browsers never send to a
+// server. Nothing here logs, and nothing here persists the plaintext.
 import { APPROVAL_TTL_MS, type ApprovalRecord } from "./types.ts";
 
 /** Public relay origin from RELAY_PUBLIC_URL, e.g. "https://approve.example.com". Must be https. */
@@ -26,6 +27,11 @@ function toHex(buf: ArrayBuffer): string {
 /** 32 CSPRNG bytes, base64url, no padding (43 chars). */
 export function mintToken(): string {
   return toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+/** 16 CSPRNG bytes, base64url (22 chars): the public id in a link's path. Not a credential. */
+export function mintLookupId(): string {
+  return toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
 }
 
 /** Hex sha256 of the plaintext token (WebCrypto). */
@@ -58,14 +64,19 @@ export async function verifyApproveToken(token: string, record: ApprovalRecord):
   return timingSafeEqualStr(await hashToken(token), record.approveTokenHash);
 }
 
-/** `<RELAY_PUBLIC_URL>/a/<token>`. The base must be https with no credentials, query or fragment. */
-export function approvalUrl(token: string, baseUrl: string = relayPublicUrl()): string {
+/**
+ * `<RELAY_PUBLIC_URL>/a/<lookupId>#<token>`. The lookupId selects the record; the token rides in
+ * the fragment, so GETs of the link (unfurlers, previews, access logs) never see it. The base must
+ * be https with no credentials, query or fragment.
+ */
+export function approvalUrl(lookupId: string, token: string, baseUrl: string = relayPublicUrl()): string {
   const u = new URL(baseUrl);
   if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash) {
     throw new Error("relay public URL must be a plain https URL");
   }
+  if (!/^[A-Za-z0-9_-]{22}$/.test(lookupId)) throw new Error("malformed lookup id");
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("malformed token");
-  return `${u.origin}${u.pathname.replace(/\/+$/, "")}/a/${token}`;
+  return `${u.origin}${u.pathname.replace(/\/+$/, "")}/a/${lookupId}#${token}`;
 }
 
 export interface BuildApprovalInput {
@@ -87,9 +98,10 @@ export interface MintedApproval {
 }
 
 /**
- * Mint fresh tokens and the record that binds them: a deny token always, an approve token only for
- * kind "approve". The caller gets the plaintexts back exactly once, to build the DM URLs; they must
- * not be stored or logged. The record holds the hashes only.
+ * Mint fresh tokens and the record that binds them: a deny token and lookupId always, an approve
+ * token and lookupId only for kind "approve". The caller gets the plaintext tokens back exactly
+ * once, to build the DM URLs; they must not be stored or logged. The record holds the hashes and
+ * the (public) lookupIds only.
  */
 export async function buildApprovalRecord(input: BuildApprovalInput): Promise<MintedApproval> {
   if (!Number.isSafeInteger(input.boundCents) || input.boundCents < 0) {
@@ -102,6 +114,8 @@ export async function buildApprovalRecord(input: BuildApprovalInput): Promise<Mi
     requestId: input.requestId,
     denyTokenHash: await hashToken(denyToken),
     ...(approveToken ? { approveTokenHash: await hashToken(approveToken) } : {}),
+    denyLookupId: mintLookupId(),
+    ...(approveToken ? { approveLookupId: mintLookupId() } : {}),
     vendor: input.vendor,
     boundCents: input.boundCents,
     kind: input.kind,

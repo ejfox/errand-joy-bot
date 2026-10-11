@@ -38,6 +38,8 @@ export class HttpRelayClient implements RelayClient {
       requestId: a.requestId,
       denyTokenHash: a.denyTokenHash,
       ...(a.kind === "approve" && a.approveTokenHash ? { approveTokenHash: a.approveTokenHash } : {}),
+      denyLookupId: a.denyLookupId,
+      ...(a.kind === "approve" && a.approveLookupId ? { approveLookupId: a.approveLookupId } : {}),
       vendor: a.vendor,
       boundCents: a.boundCents,
       kind: a.kind,
@@ -45,9 +47,14 @@ export class HttpRelayClient implements RelayClient {
       expiresAt: a.expiresAt,
     };
     const HEX = /^[0-9a-f]{64}$/;
+    const LOOKUP = /^[A-Za-z0-9_-]{22}$/;
     if (!HEX.test(body.denyTokenHash)) throw new RelayError("denyTokenHash must be sha256 hex");
+    if (!LOOKUP.test(body.denyLookupId)) throw new RelayError("denyLookupId malformed");
     if (body.kind === "approve" && !HEX.test(body.approveTokenHash ?? "")) {
       throw new RelayError("approveTokenHash must be sha256 hex for kind=approve");
+    }
+    if (body.kind === "approve" && !LOOKUP.test(body.approveLookupId ?? "")) {
+      throw new RelayError("approveLookupId malformed for kind=approve");
     }
     const res = await this.fetchImpl(`${this.base}/internal/pending`, {
       method: "POST",

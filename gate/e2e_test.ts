@@ -21,23 +21,32 @@ const RELAY_BASE = "https://relay.test";
 const relayClient = new HttpRelayClient(RELAY_BASE, RELAY_TOKEN, relayFetch as typeof fetch);
 
 let ip = 0;
-/** The owner's browser: POST the form on the page the DM link opened. */
-function tap(token: string, action: "approve" | "deny"): Promise<Response> {
+/** A DM link `/a/<id>#<token>`, split the way a browser splits it. */
+type Link = { id: string; token: string };
+
+/** The owner's browser: POST the form on the page the DM link opened (the page's script put the
+ * fragment's token into the form). */
+function tap(link: Link, action: "approve" | "deny"): Promise<Response> {
   ip++;
   return relayMod.default.fetch(
-    new Request(`${RELAY_BASE}/a/${token}/${action}`, {
+    new Request(`${RELAY_BASE}/a/${link.id}/${action}`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": `198.51.100.${ip % 250}` },
-      body: new URLSearchParams({ token }).toString(),
+      body: new URLSearchParams({ token: link.token }).toString(),
     }),
   );
 }
-function view(token: string): Promise<Response> {
+/** Opening the link: the browser requests the path only; the #fragment never leaves the device. */
+function view(link: Link): Promise<Response> {
   ip++;
-  return relayMod.default.fetch(new Request(`${RELAY_BASE}/a/${token}`, { headers: { "cf-connecting-ip": `198.51.100.${ip % 250}` } }));
+  return relayMod.default.fetch(new Request(`${RELAY_BASE}/a/${link.id}`, { headers: { "cf-connecting-ip": `198.51.100.${ip % 250}` } }));
 }
 
-const tokensIn = (dm: string) => [...dm.matchAll(/<https:\/\/relay\.test\/a\/([A-Za-z0-9_-]{43})>/g)].map((m) => m[1]);
+const tokensIn = (dm: string): Link[] =>
+  [...dm.matchAll(/<https:\/\/relay\.test\/a\/([A-Za-z0-9_-]{22})#([A-Za-z0-9_-]{43})>/g)].map((m) => ({
+    id: m[1],
+    token: m[2],
+  }));
 
 // ── gate harness ──────────────────────────────────────────────────────────
 const MIN = 60_000;
@@ -95,11 +104,12 @@ Deno.test("(b) $80 under default config → ask → owner taps the approve link 
   assertEquals([row.state, row.decision], ["pending_approval", "ask"]);
   const dm = h.notifier.messages[0];
   const [approveToken, denyToken] = tokensIn(dm);
-  assert(approveToken && denyToken && approveToken !== denyToken);
+  assert(approveToken && denyToken && approveToken.token !== denyToken.token);
   assert(dm.includes("if approved: $20.00 left today, $170.00 this month"), dm);
-  // the approve page shows only the approve form
+  // the approve page shows only the approve form, and never the token (it stays in the fragment)
   const page = await (await view(approveToken)).text();
-  assert(page.includes(`/a/${approveToken}/approve`) && !page.includes("/deny\""));
+  assert(page.includes(`/a/${approveToken.id}/approve`) && !page.includes("/deny\""));
+  assert(!page.includes(approveToken.token) && !page.includes(denyToken.token));
   const res = await tap(approveToken, "approve");
   assertEquals(res.status, 200);
   await res.body?.cancel();
@@ -126,7 +136,8 @@ Deno.test("(d) joy: the veto DM and relay page never name the item; a veto tap �
   }));
   assertEquals(row.state, "dm_delivered");
   const dm = h.notifier.messages[0];
-  assert(!dm.includes("Kite") && !dm.includes("S20") && !dm.includes("beach"), dm);
+  const text = dm.replace(/<https:\/\/[^>]+>/g, "<link>"); // random ids / tokens may contain "S20"
+  assert(!text.includes("Kite") && !text.includes("S20") && !text.includes("beach"), dm);
   const [denyToken] = tokensIn(dm);
   const page = await (await view(denyToken)).text();
   assert(!page.includes("Kite") && !page.includes(">mock<"), "page is sealed too");
@@ -272,8 +283,9 @@ Deno.test("tokens never land in the gate DB", async () => {
     h.db.prepare("SELECT * FROM events").all(),
     h.db.prepare("SELECT * FROM settings").all(),
   ]);
-  assert(!dump.includes(a) && !dump.includes(d));
-  assert(dump.includes(await hashToken(a)));
+  assert(!dump.includes(a.token) && !dump.includes(d.token));
+  assert(dump.includes(await hashToken(a.token)));
+  assert(dump.includes(a.id) && dump.includes(d.id), "the public lookupIds are stored");
 });
 
 Deno.test("cleanup", async () => {

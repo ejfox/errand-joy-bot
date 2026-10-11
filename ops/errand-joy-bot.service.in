@@ -23,7 +23,8 @@ Environment=DENO_DIR=@INSTALL_DIR@/.deno-cache
 Environment=NO_COLOR=1
 
 # Network allowlist, computed by install.sh from .env:
-#   GATE_HOST:GATE_PORT (bind), NOTIFY_DM_URL host, RELAY_URL host,
+#   GATE_HOST:GATE_PORT (bind), the notifier host (NOTIFY_DM_URL for NOTIFIER=http-dm, or
+#   NTFY_URL, default ntfy.sh, for NOTIFIER=ntfy), RELAY_URL host,
 #   plus any vendor API hosts passed as `install.sh --allow-net host1,host2`.
 # Adding a vendor host here is a deliberate, reviewed change (docs/vendors.md).
 # --allow-run is set only when HEALTH_ALERT_CMD is configured; otherwise --deny-run.

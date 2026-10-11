@@ -34,8 +34,11 @@ const RULES: { re: RegExp; why: string }[] = [
 const READ_VERB =
   /(^|[\s;&|(`])(cat|less|more|head|tail|grep|egrep|rg|ag|sed|awk|source|strings|base64|xxd|od|hexdump|bat|cut|sort|uniq|diff|nl|tee|jq|python3?|node|deno|ruby|perl|scp|rsync|curl|wget|nc|open|code|vim?|nano|emacs)\b|(^|[\s;&|])\.\s+\S*\.env|<\s*\S*\.env/;
 
-/** Relay approval link: /a/<43-char base64url token>. Short paths like /a/b are not tokens. */
-const APPROVE_LINK = /\/a\/[A-Za-z0-9_-]{40,}/;
+/**
+ * Relay approval link: /a/<22-char lookupId>#<43-char base64url token> (the token rides in the
+ * fragment), or the older /a/<43-char token>. Short paths like /a/b are not links.
+ */
+const APPROVE_LINK = /\/a\/[A-Za-z0-9_-]{16,64}#[A-Za-z0-9_-]{32,}|\/a\/[A-Za-z0-9_-]{40,}/;
 
 function envPathIsGate(text: string, cwd: string): boolean {
   // a .env (not .env.example) mentioned together with a gate directory, or while working inside one
@@ -52,7 +55,7 @@ export function check(input: HookInput): string | null {
   const all = JSON.stringify(ti);
 
   if (APPROVE_LINK.test(all)) {
-    return "that input contains a relay approval link (/a/<token>). Only the owner opens or taps those; an agent must never fetch, click or forward one.";
+    return "that input contains a relay approval link (/a/<id>#<token>). Only the owner opens or taps those; an agent must never fetch, click or forward one.";
   }
 
   if (SHELL_TOOLS.has(tool)) {
@@ -86,6 +89,8 @@ function selfTest(): void {
     [{ tool_name: "Read", tool_input: { file_path: "/opt/errand-joy-bot/.env" } }, true],
     [{ tool_name: "WebFetch", tool_input: { url: "https://approve.example.com/a/" + "A".repeat(43) } }, true],
     [{ tool_name: "mcp__x__y", tool_input: { note: "see https://approve.example.com/a/" + "b_-9".repeat(11) } }, true],
+    [{ tool_name: "WebFetch", tool_input: { url: "https://approve.example.com/a/" + "L".repeat(22) + "#" + "T".repeat(43) } }, true],
+    [{ tool_name: "Bash", tool_input: { command: "open 'https://approve.example.com/a/" + "x_-Y".repeat(5) + "zz#" + "b_-9".repeat(11) + "'" } }, true],
     [{ tool_name: "Bash", tool_input: { command: "bin/buy status abc && bin/buy budgets" } }, false],
     [{ tool_name: "Bash", tool_input: { command: "bin/buy stop runaway agent" } }, false],
     [{ tool_name: "Bash", tool_input: { command: "bin/buy health" } }, false],

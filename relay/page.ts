@@ -1,5 +1,6 @@
-// relay/page.ts — pure HTML renderers. No JS, no external assets, inline CSS only.
-// Every value that came from a record or a URL goes through esc().
+// relay/page.ts — pure HTML renderers. No external assets, inline CSS only, and exactly ONE
+// inline script (TOKEN_SCRIPT, allowed by its sha256 in the CSP; see main.ts). Every value that
+// came from a record or a URL goes through esc().
 import type { StoredApproval } from "./store.ts";
 
 export function esc(s: string): string {
@@ -64,6 +65,8 @@ form{margin:0 0 12px}
 button{width:100%;min-height:56px;font:inherit;font-size:18px;font-weight:700;border-radius:12px;border:2px solid;cursor:pointer}
 .ok{background:#7bf0f9;color:#0b0d10;border-color:#7bf0f9}
 .no{background:transparent;color:#ff4d8d;border-color:#ff4d8d}
+button:disabled{opacity:.35;cursor:not-allowed}
+.need{color:#ff4d8d;font-size:15px;margin:0 0 12px}
 .note{color:#9aa4ad;font-size:14px;margin-top:20px}
 .msg{font-size:22px;margin:8px 0}
 `;
@@ -88,26 +91,44 @@ export const NEUTRAL_HTML = shell(
 );
 
 /**
- * The page for one link. Each token does exactly one thing, so the page shows exactly one
- * form: an approve link renders only Approve, a deny link renders only Deny / Veto.
+ * The page's only script. The link is /a/<lookupId>#<token>; the fragment never reaches the
+ * server, so the server-rendered page has an EMPTY token field and a disabled button. This reads
+ * the token from location.hash, fills the field, enables the button, and clears the fragment from
+ * the address bar (history.replaceState) so it doesn't linger in history or get copied along.
+ * Without JS, or without a well-formed fragment, the button stays disabled: fail closed.
+ * main.ts allows exactly this string by its sha256 in the CSP, so keep it byte-for-byte static.
  */
-export function approvalPage(a: StoredApproval, token: string, role: "approve" | "deny"): string {
-  const t = esc(token);
+export const TOKEN_SCRIPT =
+  `(function(){var t=location.hash.slice(1);try{history.replaceState(null,"",location.pathname)}catch(e){}` +
+  `var m=document.getElementById("need");if(!/^[A-Za-z0-9_-]{32,128}$/.test(t)){` +
+  `if(m)m.textContent="This link is incomplete. Open it again from your message.";return}` +
+  `var i,f=document.querySelectorAll("input[name=token]");for(i=0;i<f.length;i++)f[i].value=t;` +
+  `var b=document.querySelectorAll("button[type=submit]");for(i=0;i<b.length;i++)b[i].disabled=false;` +
+  `if(m)m.hidden=true})();`;
+
+/**
+ * The page for one link. Each link does exactly one thing, so the page shows exactly one
+ * form: an approve link renders only Approve, a deny link renders only Deny / Veto.
+ * The page carries the public lookupId only; the token is filled in client-side by TOKEN_SCRIPT.
+ */
+export function approvalPage(a: StoredApproval, lookupId: string, role: "approve" | "deny"): string {
+  const id = esc(lookupId);
   const isVeto = a.kind === "veto";
   const amount = esc(dollars(a.boundCents));
+  const field = `<input type="hidden" name="token" value="">`;
   let form: string;
   let note: string;
   if (role === "approve") {
-    form = `<form method="post" action="/a/${t}/approve">
-<input type="hidden" name="token" value="${t}">
-<button class="ok" type="submit">Approve ${amount}</button>
+    form = `<form method="post" action="/a/${id}/approve" autocomplete="off">
+${field}
+<button class="ok" type="submit" disabled>Approve ${amount}</button>
 </form>`;
     note = "Nothing is bought unless you approve. One tap, single use. " +
       "To decline, use the Deny link from your message instead.";
   } else {
-    form = `<form method="post" action="/a/${t}/deny">
-<input type="hidden" name="token" value="${t}">
-<button class="no" type="submit">${isVeto ? "Veto this purchase" : "Deny"}</button>
+    form = `<form method="post" action="/a/${id}/deny" autocomplete="off">
+${field}
+<button class="no" type="submit" disabled>${isVeto ? "Veto this purchase" : "Deny"}</button>
 </form>`;
     note = isVeto
       ? "This goes ahead unless you veto it. One tap, single use."
@@ -129,8 +150,10 @@ export function approvalPage(a: StoredApproval, token: string, role: "approve" |
 <dt>Vendor</dt><dd>${esc(a.vendor)}</dd>
 <dt>Expires</dt><dd>${esc(fmtExpiry(a.expiresAt))}</dd>
 </dl>
+<p class="need" id="need">To confirm, this page needs JavaScript turned on. Nothing has been done yet.</p>
 ${form}
-<p class="note">${esc(note)}</p>`,
+<p class="note">${esc(note)}</p>
+<script>${TOKEN_SCRIPT}</script>`,
   );
 }
 

@@ -41,9 +41,11 @@ cp .env.example .env && chmod 600 .env
 ops/set-key.sh --generate GATE_AGENT_TOKEN
 ops/set-key.sh --generate GATE_ADMIN_TOKEN
 ops/set-key.sh --generate RELAY_TOKEN
-ops/set-key.sh NOTIFY_DM_TOKEN            # hidden prompt; paste, Enter
+ops/set-key.sh --generate NTFY_TOPIC      # NOTIFIER=ntfy: random 43-char topic (a secret on ntfy.sh)
+#   or, for NOTIFIER=http-dm: ops/set-key.sh NOTIFY_DM_TOKEN   (hidden prompt; paste, Enter)
 #    then edit the non-secret lines in .env with an editor:
-#    NOTIFY_DM_URL, NOTIFY_USER_ID, RELAY_URL, RELAY_PUBLIC_URL, DATA_DIR, CONFIG_PATH
+#    NOTIFIER, NTFY_URL (ntfy) or NOTIFY_DM_URL + NOTIFY_USER_ID (http-dm),
+#    RELAY_URL, RELAY_PUBLIC_URL, DATA_DIR, CONFIG_PATH
 
 # 3. policy
 cp examples/config.example.toml config.toml && chmod 600 config.toml

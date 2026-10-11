@@ -47,11 +47,11 @@ There is deliberately **no** approve, deny, stop, unstop, fund or rate tool. `ra
 - a Bash command running `buy approve|unstop|fund-add|rate`, or `set-key` / `keys-from-clipboard`
 - a Bash command or `Read` that reads the gate's `.env` (or its `backups/`)
 - a Bash command or `WebFetch` that hits the gate's or relay's `/internal/` routes
-- **any** tool input containing a relay approval link (`/a/<40+ char token>`)
+- **any** tool input containing a relay approval link (`/a/<id>#<token>`, or the older `/a/<40+ char token>`)
 
 It's pattern matching. A determined or compromised agent could evade it, which is why nothing depends on it. (`buy approve` isn't even a `bin/buy` subcommand, since approval is relay-only; the pattern is there in case someone adds one.) If `deno` is missing, the hook errors non-blockingly and the structural boundary still holds. The setup skill asks *you* to run the secret-touching commands in your own terminal, because the guard blocks Claude from running them. Maintainers: editing `evals/refuses-self-approval/prompt.md` while the plugin is enabled trips the guard too, since it contains a fake approval link. Disable the plugin for that edit.
 
-Keep the gate on loopback, deploy only `relay/` publicly, and treat relay access logs as sensitive, because link tokens appear in request paths.
+Keep the gate on loopback, deploy only `relay/` publicly, and don't enable request-body logging in front of it: link tokens travel only in the `#fragment` (never sent) and in the POST body of a tap, so access logs see just the public lookupId.
 
 ## Develop and validate
 

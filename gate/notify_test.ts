@@ -14,6 +14,7 @@ import {
   makeHealthAlerter,
   makeNotifier,
   NoopHealthAlerter,
+  NtfyNotifier,
   quietHoursConfig,
   stopDm,
   vetoDm,
@@ -110,6 +111,103 @@ Deno.test("makeNotifier / makeHealthAlerter: fakes unless DRY_RUN=0", () => {
     if (prev === undefined) Deno.env.delete("DRY_RUN");
     else Deno.env.set("DRY_RUN", prev);
     if (prevCmd !== undefined) Deno.env.set("HEALTH_ALERT_CMD", prevCmd);
+  }
+});
+
+// ── ntfy ──────────────────────────────────────────────────────────────────
+const NTFY_TOPIC = "test-topic-0123456789abcdef"; // 27 chars: long enough for public ntfy.sh
+
+/** A fetch stub that records every call and answers with `respond`. Never touches the network. */
+function fetchStub(respond: () => Response | Promise<Response>) {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const f = ((input: RequestInfo | URL, init: RequestInit = {}) => {
+    calls.push({ url: String(input), init });
+    return Promise.resolve(respond());
+  }) as typeof fetch;
+  return { f, calls };
+}
+
+Deno.test("NtfyNotifier: exact request shape, plain-text body, no click/action headers", async () => {
+  const { f, calls } = fetchStub(() => Response.json({ id: "hwQ2YpKdmg", event: "message" }));
+  const n = new NtfyNotifier("https://ntfy.sh", NTFY_TOPIC, "", f);
+  const text = "purchase-gate: ...\napprove (24h): <https://approve.example.test/a/AAAAAAAAAAAAAAAAAAAAAA#tok>";
+  assertEquals(await n.send(text), { ok: true, messageId: "hwQ2YpKdmg" });
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].url, `https://ntfy.sh/${NTFY_TOPIC}`);
+  assertEquals(calls[0].init.method, "POST");
+  assertEquals(calls[0].init.redirect, "error");
+  const h = new Headers(calls[0].init.headers);
+  assertEquals(h.get("title"), "errand-joy-bot");
+  assertEquals(h.get("markdown"), "no");
+  assert(h.get("content-type")?.startsWith("text/plain"));
+  assertEquals(h.get("authorization"), null, "no token configured → no Authorization header");
+  for (const k of ["click", "actions", "action", "attach", "icon", "x-click", "x-actions"]) {
+    assertEquals(h.get(k), null, `${k} header would make ntfy pre-load a URL`);
+  }
+  // the link stays plain text in the body, without the Discord <...> wrapper
+  assertEquals(
+    calls[0].init.body,
+    "purchase-gate: ...\napprove (24h): https://approve.example.test/a/AAAAAAAAAAAAAAAAAAAAAA#tok",
+  );
+});
+
+Deno.test("NtfyNotifier: Bearer token when set; custom server; trailing slash", async () => {
+  const { f, calls } = fetchStub(() => Response.json({ id: "abc123" }));
+  const n = new NtfyNotifier("https://ntfy.example.test/", "short_topic", "test-ntfy-token", f);
+  assertEquals(await n.send("x"), { ok: true, messageId: "abc123" });
+  assertEquals(calls[0].url, "https://ntfy.example.test/short_topic");
+  assertEquals(new Headers(calls[0].init.headers).get("authorization"), "Bearer test-ntfy-token");
+});
+
+Deno.test("NtfyNotifier: fails closed without a 2xx + JSON id; errors never carry the text", async () => {
+  const secret = "approve: <https://approve.example.test/a/AAAAAAAAAAAAAAAAAAAAAA#SECRETTOKENSECRETTOKEN>";
+  const cases: Array<[() => Response, string]> = [
+    [() => Response.json({ event: "message" }), "no_message_id"],
+    [() => Response.json({ id: "" }), "no_message_id"],
+    [() => Response.json({ id: 42 }), "no_message_id"],
+    [() => new Response("not json", { status: 200 }), "bad_json"],
+    [() => new Response("forbidden", { status: 403 }), "http_403"],
+    [() => Response.json({ id: "x" }, { status: 500 }), "http_500"],
+  ];
+  for (const [respond, error] of cases) {
+    const { f } = fetchStub(respond);
+    const r = await new NtfyNotifier("https://ntfy.sh", NTFY_TOPIC, "", f).send(secret);
+    assertEquals(r, { ok: false, error });
+  }
+  const throwing = (() => Promise.reject(new TypeError("boom " + secret))) as typeof fetch;
+  const r = await new NtfyNotifier("https://ntfy.sh", NTFY_TOPIC, "", throwing).send(secret);
+  assertEquals(r, { ok: false, error: "fetch_TypeError" });
+});
+
+Deno.test("NtfyNotifier: config refusals never call fetch", async () => {
+  const { f, calls } = fetchStub(() => Response.json({ id: "x" }));
+  const bad: Array<[NtfyNotifier, string]> = [
+    [new NtfyNotifier("https://ntfy.sh", "", "", f), "notifier_unconfigured"],
+    [new NtfyNotifier("https://ntfy.sh", "has/slash", "", f), "ntfy_bad_topic"],
+    [new NtfyNotifier("https://ntfy.sh", "a".repeat(65), "", f), "ntfy_bad_topic"],
+    [new NtfyNotifier("https://ntfy.sh", "alerts", "", f), "ntfy_topic_guessable"],
+    [new NtfyNotifier("http://ntfy.example.test", NTFY_TOPIC, "", f), "notifier_unsafe_url"],
+    [new NtfyNotifier("https://u:p@ntfy.example.test", NTFY_TOPIC, "", f), "notifier_unsafe_url"],
+    [new NtfyNotifier("https://ntfy.example.test/?x=1", NTFY_TOPIC, "", f), "notifier_unsafe_url"],
+  ];
+  for (const [n, error] of bad) assertEquals(await n.send("x"), { ok: false, error });
+  assertEquals(calls.length, 0);
+  // plain http is fine on loopback (a self-hosted ntfy on the same box)
+  assert((await new NtfyNotifier("http://127.0.0.1:8090", "t", "", f).send("x")).ok);
+});
+
+Deno.test("makeNotifier: NOTIFIER=ntfy picks NtfyNotifier (DRY_RUN=0 only); unknown fails closed", async () => {
+  const prev = { DRY_RUN: Deno.env.get("DRY_RUN"), NOTIFIER: Deno.env.get("NOTIFIER") };
+  try {
+    Deno.env.set("NOTIFIER", "ntfy");
+    Deno.env.delete("DRY_RUN");
+    assert(makeNotifier() instanceof FakeNotifier);
+    Deno.env.set("DRY_RUN", "0");
+    assert(makeNotifier() instanceof NtfyNotifier);
+    Deno.env.set("NOTIFIER", "pigeon");
+    assertEquals(await makeNotifier().send("x"), { ok: false, error: "unknown_transport" });
+  } finally {
+    for (const [k, v] of Object.entries(prev)) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
   }
 });
 

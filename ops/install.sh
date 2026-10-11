@@ -93,7 +93,13 @@ echo "deno: $DENO ($("$DENO" --version | head -1))"
 [[ -f "$ENV_FILE" ]] || die ".env missing. Run: cp .env.example .env && chmod 600 .env, then fill it with ops/set-key.sh (see docs/runbook.md)"
 mode="$(file_mode "$ENV_FILE")"
 [[ "$mode" == "600" || "$mode" == "400" ]] || die ".env is mode $mode; run: chmod 600 $ENV_FILE"
-for k in GATE_AGENT_TOKEN GATE_ADMIN_TOKEN RELAY_TOKEN RELAY_URL RELAY_PUBLIC_URL NOTIFY_DM_URL; do
+NOTIFIER_NAME="$(env_get NOTIFIER || true)"; NOTIFIER_NAME="${NOTIFIER_NAME:-http-dm}"
+case "$NOTIFIER_NAME" in
+  http-dm) NOTIFY_KEYS="NOTIFY_DM_URL" ;;
+  ntfy)    NOTIFY_KEYS="NTFY_TOPIC" ;;
+  *) die "NOTIFIER=$NOTIFIER_NAME is not a known transport (http-dm, ntfy)" ;;
+esac
+for k in GATE_AGENT_TOKEN GATE_ADMIN_TOKEN RELAY_TOKEN RELAY_URL RELAY_PUBLIC_URL $NOTIFY_KEYS; do
   v="$(env_get "$k" || true)"
   [[ -n "$v" ]] || die "$k is empty in .env"
 done
@@ -123,8 +129,16 @@ else
 fi
 
 ALLOW_NET="$GATE_HOST:$GATE_PORT"
-for k in NOTIFY_DM_URL RELAY_URL; do
-  h="$(host_of "$(env_get "$k")")"
+# The notifier's host (NOTIFY_DM_URL for http-dm; NTFY_URL, default https://ntfy.sh, for ntfy) and the relay.
+if [[ "$NOTIFIER_NAME" == "ntfy" ]]; then
+  NTFY_URL_VAL="$(env_get NTFY_URL || true)"; NTFY_URL_VAL="${NTFY_URL_VAL:-https://ntfy.sh}"
+  NET_URLS=("NTFY_URL=$NTFY_URL_VAL" "RELAY_URL=$(env_get RELAY_URL)")
+else
+  NET_URLS=("NOTIFY_DM_URL=$(env_get NOTIFY_DM_URL)" "RELAY_URL=$(env_get RELAY_URL)")
+fi
+for kv in "${NET_URLS[@]}"; do
+  k="${kv%%=*}"
+  h="$(host_of "${kv#*=}")"
   [[ "$h" =~ ^[A-Za-z0-9.:_-]+$|^\[[0-9a-fA-F:]+\](:[0-9]+)?$ ]] || die "$k does not look like an http(s) URL"
   ALLOW_NET="$ALLOW_NET,$h"
 done
