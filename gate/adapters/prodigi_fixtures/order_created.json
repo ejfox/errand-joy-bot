@@ -1,0 +1,55 @@
+{
+  "outcome": "Created",
+  "order": {
+    "id": "ord_100001",
+    "created": "2026-10-11T14:40:05.12Z",
+    "lastUpdated": "2026-10-11T14:40:05.2018442Z",
+    "callbackUrl": null,
+    "merchantReference": "ejb-example",
+    "shippingMethod": "Budget",
+    "idempotencyKey": "ejb-example",
+    "status": {
+      "stage": "InProgress",
+      "issues": [],
+      "details": {
+        "downloadAssets": "NotStarted",
+        "printReadyAssetsPrepared": "NotStarted",
+        "allocateProductionLocation": "NotStarted",
+        "inProduction": "NotStarted",
+        "shipping": "NotStarted"
+      }
+    },
+    "charges": [],
+    "shipments": [],
+    "recipient": {
+      "name": "Example Owner",
+      "email": null,
+      "phoneNumber": "5555550100",
+      "address": {
+        "line1": "101 Example St",
+        "line2": null,
+        "postalOrZipCode": "10001",
+        "countryCode": "US",
+        "townOrCity": "Exampleville",
+        "stateOrCounty": "NY"
+      }
+    },
+    "items": [
+      {
+        "id": "ori_100001",
+        "status": "NotYetDownloaded",
+        "merchantReference": "ejb-example-1",
+        "sku": "GLOBAL-FAP-12X16",
+        "copies": 2,
+        "sizing": "fillPrintArea",
+        "attributes": {},
+        "assets": [
+          { "id": "ast_100001", "printArea": "default", "url": "https://example.com/test-art.png", "status": "InProgress" }
+        ]
+      }
+    ],
+    "packingSlip": null,
+    "metadata": { "ejb_idempotency_key": "ejb-example", "task_id": "example-task" }
+  },
+  "traceParent": "00-example0000000000000000000000000-example000000000-00"
+}

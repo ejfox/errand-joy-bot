@@ -1,0 +1,35 @@
+{
+  "shipped": {
+    "OrderLines": [],
+    "SalesOrderId": "test-so-1",
+    "WebOrderId": 900000001,
+    "OrderStatus": 4,
+    "OrderStatusName": "Shipped",
+    "OrderDate": "2026-10-11T12:00:00",
+    "PaymentDetail": { "PoNumber": "ejb-example", "PaymentMethodName": "Example Visa" },
+    "DeliveryDetail": {
+      "ShippingMethodName": "Example Ground",
+      "TrackingDetails": [{ "Number": "test-1Z000", "Link": "https://tracking.example.com/test-1Z000" }]
+    },
+    "CurrencyCode": "USD",
+    "SummaryDetail": { "MerchandiseTotal": "$25.00", "OrderTotal": "$35.25", "AdditionalFeesTotal": "$0.00" }
+  },
+  "cancelled": {
+    "OrderLines": [],
+    "SalesOrderId": "test-so-2",
+    "WebOrderId": 900000002,
+    "OrderStatus": 9,
+    "OrderStatusName": "Cancelled",
+    "DeliveryDetail": { "TrackingDetails": [] },
+    "CurrencyCode": "USD",
+    "SummaryDetail": { "MerchandiseTotal": "$10.00", "OrderTotal": "$10.00", "AdditionalFeesTotal": "$0.00" }
+  },
+  "open": {
+    "WebOrderId": 900000001,
+    "OrderStatus": 1,
+    "OrderStatusName": "In Process",
+    "DeliveryDetail": { "TrackingDetails": [] },
+    "CurrencyCode": "USD",
+    "SummaryDetail": { "OrderTotal": "$35.25" }
+  }
+}

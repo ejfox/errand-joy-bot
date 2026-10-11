@@ -1,0 +1,35 @@
+{
+  "outcome": "CreatedWithIssues",
+  "order": {
+    "id": "ord_100002",
+    "created": "2026-10-11T15:00:00.00Z",
+    "merchantReference": "ejb-example",
+    "shippingMethod": "Budget",
+    "idempotencyKey": "ejb-example",
+    "status": {
+      "stage": "InProgress",
+      "issues": [
+        {
+          "objectId": "ord_100002",
+          "errorCode": "RequiresPaymentAuthorisation",
+          "description": "Payment authorisation required for 'ord_100002' (29.10USD) please use the following URL to make payment: https://dashboard.example.com/payment/100002",
+          "authorisationDetails": {
+            "authorisationUrl": "https://dashboard.example.com/payment/100002",
+            "paymentDetails": { "amount": "29.10", "currency": "USD" }
+          }
+        }
+      ],
+      "details": {
+        "downloadAssets": "NotStarted",
+        "printReadyAssetsPrepared": "NotStarted",
+        "allocateProductionLocation": "NotStarted",
+        "inProduction": "NotStarted",
+        "shipping": "NotStarted"
+      }
+    },
+    "charges": [],
+    "shipments": [],
+    "items": []
+  },
+  "traceParent": "00-example0000000000000000000000000-example000000000-00"
+}

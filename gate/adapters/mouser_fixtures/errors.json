@@ -1,0 +1,35 @@
+{
+  "search_invalid_key": {
+    "Errors": [
+      {
+        "Id": 0,
+        "Code": "Invalid",
+        "Message": "Example: invalid unique identifier.",
+        "ResourceKey": "InvalidIdentifier",
+        "ResourceFormatString": null,
+        "ResourceFormatString2": null,
+        "PropertyName": "API Key"
+      }
+    ],
+    "SearchResults": null
+  },
+  "cart_bad_part": {
+    "Errors": [
+      {
+        "Id": 0,
+        "Code": "InvalidPartNumber",
+        "Message": "Example: part number not found.",
+        "PropertyName": "MouserPartNumber"
+      }
+    ],
+    "CartKey": null,
+    "CartItems": []
+  },
+  "submit_no_order_id": {
+    "Order": {
+      "OrderID": null,
+      "Errors": [{ "Id": 0, "Code": "PaymentDeclined", "Message": "Example: card declined.", "PropertyName": "Payment" }],
+      "SubmitOrder": true
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "Errors": [],
+  "CartKey": "00000000-0000-0000-0000-000000000000",
+  "CurrencyCode": "USD",
+  "CartItems": [
+    {
+      "Errors": [],
+      "MouserATS": 120,
+      "Quantity": 2,
+      "MouserPartNumber": "485-EXAMPLE1",
+      "MfrPartNumber": "EXAMPLE-4116",
+      "Description": "Example e-paper breakout (test fixture)",
+      "UnitPrice": 12.5,
+      "ExtendedPrice": 25.0,
+      "Manufacturer": "Example Maker",
+      "SalesMultipleQty": 1,
+      "SalesMinimumOrderQty": 1,
+      "additionalFees": []
+    }
+  ],
+  "TotalItemCount": 1,
+  "additionalFeesTotal": 0,
+  "MerchandiseTotal": 25.0
+}

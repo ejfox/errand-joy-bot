@@ -1,0 +1,35 @@
+{
+  "outcome": "Ok",
+  "orders": [
+    {
+      "id": "ord_100003",
+      "created": "2026-10-12T09:00:00Z",
+      "status": { "stage": "Cancelled", "issues": [] },
+      "charges": [
+        { "id": "chg_100010", "chargeType": "Item", "totalCost": { "amount": "12.00", "currency": "USD" } },
+        { "id": "chg_100011", "chargeType": "Refund", "totalCost": { "amount": "-12.00", "currency": "USD" } }
+      ],
+      "shipments": []
+    },
+    {
+      "id": "ord_100002",
+      "created": "2026-10-11T15:00:00Z",
+      "status": { "stage": "InProgress", "issues": [] },
+      "charges": [],
+      "shipments": []
+    },
+    {
+      "id": "ord_100001",
+      "created": "2026-10-11T14:40:05.12Z",
+      "status": { "stage": "Complete", "issues": [] },
+      "charges": [
+        { "id": "chg_100001", "chargeType": "Item", "totalCost": { "amount": "21.40", "currency": "USD" } },
+        { "id": "chg_100002", "chargeType": "Shipping", "totalCost": { "amount": "6.95", "currency": "USD" } }
+      ],
+      "shipments": []
+    }
+  ],
+  "hasMore": false,
+  "nextUrl": null,
+  "traceParent": "00-example0000000000000000000000000-example000000000-00"
+}

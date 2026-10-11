@@ -5,9 +5,11 @@
 import { OWNER_HOME, type PurchaseRequest, type Reach, REACH_RANK, type VendorAdapter } from "../types.ts";
 import { MockAdapter } from "./mock.ts";
 import { zincFromEnv } from "./zinc.ts";
+import { prodigiFromEnv } from "./prodigi.ts";
+import { mouserFromEnv } from "./mouser.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
-//   mouser / craftcloud / pcbway          self when shipTo is owner-home, otherwise others
+//   craftcloud / pcbway                   self when shipTo is owner-home, otherwise others
 //   lob / stannp / goody                  others (mails or gifts a third party)
 //   tree-nation / skyfi                   world
 
@@ -111,6 +113,8 @@ export interface RegistryOptions extends GuardOptions {
 export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => VendorAdapter>> = {
   mock: (o) => new MockAdapter({ taxRate: o.mockTaxRate, worldCategories: [...(o.worldCategories ?? [])] }),
   zinc: () => zincFromEnv(),
+  prodigi: () => prodigiFromEnv(),
+  mouser: () => mouserFromEnv(),
 };
 
 export function knownVendors(): string[] {

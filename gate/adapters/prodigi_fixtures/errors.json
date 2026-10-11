@@ -1,0 +1,22 @@
+{
+  "validationFailed": {
+    "outcome": "ValidationFailed",
+    "statusText": "Example: the request failed validation.",
+    "statusCode": 400,
+    "data": { "errors": [{ "property": "items[0].sku", "description": "Example: unknown SKU" }] },
+    "traceParent": "00-example0000000000000000000000000-example000000000-00"
+  },
+  "unauthorised": {
+    "statusText": "Example: credentials are missing or incorrect.",
+    "statusCode": 401,
+    "traceParent": "00-example0000000000000000000000000-example000000000-00"
+  },
+  "internalServerError": {
+    "outcome": "InternalServerError",
+    "statusText": "Example: unexpected error.",
+    "statusCode": 500,
+    "traceParent": "00-example0000000000000000000000000-example000000000-00"
+  },
+  "cancelled": { "outcome": "Cancelled", "order": { "id": "ord_100001", "status": { "stage": "Cancelled", "issues": [] } } },
+  "failedToCancel": { "outcome": "FailedToCancel", "order": { "id": "ord_100001", "status": { "stage": "InProgress", "issues": [] } } }
+}
