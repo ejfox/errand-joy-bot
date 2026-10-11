@@ -197,7 +197,7 @@ Hosts: `api.zinc.com` (added to `--allow-net` by `ops/install.sh` when `zinc` is
 
 1. Sign in at <https://app.zinc.com>, top up the wallet by ACH (0.8%, capped at $5) with a
    small amount (e.g. $50). **Leave auto top-up OFF**: then the balance is a hard cap.
-2. Create a dedicated live key named `zinc-<host>-<yyyy-mm>` (e.g. `zinc-ejfvps-2026-10`),
+2. Create a dedicated live key named `zinc-<host>-<yyyy-mm>` (e.g. `zinc-myvps-2026-10`),
    paste it with `ops/set-key.sh ZINC_API_KEY`.
 3. Optionally register a webhook (Settings, or `PUT /webhooks/endpoint`) for `order.*` events.
    Test-mode webhooks are configured separately from live ones.
@@ -259,7 +259,7 @@ in-stock species of that project). Species ids and prices differ between the tes
 
 1. Create a company account on tree-nation.com, and a test account on the test host.
 2. Request a test token with the form linked from the integration guide. The live token comes after
-   testing. Name it `treenation-<host>-<yyyy-mm>` on your side, e.g. `treenation-ejfvps-2026-10`.
+   testing. Name it `treenation-<host>-<yyyy-mm>` on your side, e.g. `treenation-myvps-2026-10`.
 3. Pay by card: credit the account with a small amount (e.g. €20, enough for 40-60 trees).
    **The card option auto-recharges when the balance falls to 10% of the last top-up**, which
    makes the balance useless as a cap. Ask Tree-Nation to switch auto-recharge off, or to set a
@@ -333,7 +333,7 @@ budget (`budgetAmount`), which `place()` and validate (402) both enforce.
 1. Create a SkyFi account at <https://app.skyfi.com>, add a single-merchant virtual card with a
    monthly limit (e.g. $60).
 2. Set the account budget low (e.g. $50/month) and create an API key; name it
-   `skyfi-<host>-<yyyy-mm>`, e.g. `skyfi-ejfvps-2026-10`. `ops/set-key.sh SKYFI_API_KEY`.
+   `skyfi-<host>-<yyyy-mm>`, e.g. `skyfi-myvps-2026-10`. `ops/set-key.sh SKYFI_API_KEY`.
 3. If you want Vantor scenes, accept the Vantor EULA once in the app.
 
 Opt-in live test (quote only: whoami, a catalog search near Peekskill, one validate; nothing is ordered):
@@ -402,7 +402,7 @@ to an address it can't verify.
 1. Sign up at <https://www.stannp.com/us> (business-oriented; no Amex).
 2. Top up a small prepaid balance, e.g. **$10** (≈ 12 postcards). **Auto top-up OFF**, and
    ideally no saved card at all, so `/accounts/topup` can't charge anything either.
-3. Name the key `stannp-ejfvps-2026-10`. The docs only show one key on the settings page
+3. Name the key `stannp-myvps-2026-10`. The docs only show one key on the settings page
    (unverified whether keys can be named or multiplied); if it can't be named there, record
    that name with the key's last 4 characters in your notes. Paste it with
    `ops/set-key.sh STANNP_API_KEY`.
@@ -476,7 +476,7 @@ the card:
 1. Create a **Privacy.com card locked to Lulu** (merchant-locked on first charge) with a
    **$40/month** spending limit, and make it the only card on the Lulu account. Pause it, don't
    close it, when stopping.
-2. Generate the client key/secret and record them as `lulu-ejfvps-2026-10`; paste with
+2. Generate the client key/secret and record them as `lulu-myvps-2026-10`; paste with
    `ops/set-key.sh LULU_CLIENT_KEY` and `ops/set-key.sh LULU_CLIENT_SECRET`.
 3. Rehearse on the sandbox first (separate account, Lulu's test card); switch
    `LULU_ENV=production` only after a sandbox run passes.
