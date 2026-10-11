@@ -325,7 +325,8 @@ Deno.test("listCharges: reporting list since the cutoff, cancelled skipped, unkn
     { vendorChargeId: "letter:50000002", amountCents: 94, at: "2026-10-11T16:00:00.000Z", vendorOrderId: "letter:50000002" },
     { vendorChargeId: "greetingcard:50000005", amountCents: 150, at: "2026-10-11T18:00:00.000Z", vendorOrderId: "greetingcard:50000005" },
   ]);
-  assert(calls[0].url.startsWith("https://stannp.example/v1/reporting/list/2026-10-11/"));
+  // The start date is a day early (Stannp dates may be US-local); 50000004 (before the cutoff) is still dropped.
+  assert(calls[0].url.startsWith("https://stannp.example/v1/reporting/list/2026-10-10/"));
 });
 
 Deno.test("listCharges: amounts and ids equal what place() recorded, so reconcile matches", async () => {

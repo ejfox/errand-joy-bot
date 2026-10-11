@@ -292,7 +292,8 @@ export class StannpAdapter implements VendorAdapter {
   async listCharges(sinceISO: string): Promise<Charge[]> {
     const since = Date.parse(sinceISO);
     if (!Number.isFinite(since)) throw new StannpError("stannp_bad_since");
-    const start = new Date(since).toISOString().slice(0, 10);
+    // A day early: Stannp's report dates may be US-local; the timestamp filter below trims the rest.
+    const start = new Date(since - 86_400_000).toISOString().slice(0, 10);
     const end = new Date(Math.max(Date.now(), since)).toISOString().slice(0, 10);
     const data = await this.data("GET", `/v1/reporting/list/${start}/${end}`) as { singles?: StannpMailpiece[] };
     const out: Charge[] = [];

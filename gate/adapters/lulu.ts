@@ -372,7 +372,8 @@ export class LuluAdapter implements VendorAdapter {
     const out: Charge[] = [];
     for (let page = 1; page <= 200; page++) {
       const qs = new URLSearchParams({
-        created_after: new Date(since).toISOString(),
+        // Lulu documents second precision with a Z; no milliseconds.
+        created_after: new Date(since).toISOString().replace(/\.\d{3}Z$/, "Z"),
         exclude_line_items: "true",
         page: String(page),
         page_size: "100",

@@ -216,8 +216,9 @@ to an address it can't verify.
 1. Sign up at <https://www.stannp.com/us> (business-oriented; no Amex).
 2. Top up a small prepaid balance, e.g. **$10** (≈ 12 postcards). **Auto top-up OFF**, and
    ideally no saved card at all, so `/accounts/topup` can't charge anything either.
-3. Label the key `stannp-ejfvps-2026-10` in your notes (Stannp has one key per account; if the
-   dashboard can't name it, record the name with the last 4 characters). Paste it with
+3. Name the key `stannp-ejfvps-2026-10`. The docs only show one key on the settings page
+   (unverified whether keys can be named or multiplied); if it can't be named there, record
+   that name with the key's last 4 characters in your notes. Paste it with
    `ops/set-key.sh STANNP_API_KEY`.
 
 **Live test** (test mode only: nothing is mailed or charged; the place step sends `test=true`):

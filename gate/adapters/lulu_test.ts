@@ -326,7 +326,7 @@ Deno.test("listCharges: costed jobs since the cutoff; canceled, rejected and unc
     { vendorChargeId: "90006", amountCents: 2_510, at: "2026-10-11T20:00:00.000Z", vendorOrderId: "90006" },
   ]);
   const first = calls.find(isList)!;
-  assert(first.url.includes("created_after=2026-10-11T00%3A00%3A00.000Z"));
+  assert(first.url.includes("created_after=2026-10-11T00%3A00%3A00Z"));
   assert(first.url.includes("exclude_line_items=true"));
 });
 
