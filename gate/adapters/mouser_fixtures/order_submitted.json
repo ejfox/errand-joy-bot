@@ -1,0 +1,18 @@
+{
+  "Order": {
+    "OrderLines": [
+      { "Errors": [], "Quantity": 2, "MouserPartNumber": "485-EXAMPLE1", "UnitPrice": 12.5, "ExtendedPrice": 25.0 }
+    ],
+    "CurrencyCode": "USD",
+    "MerchandiseTotal": 25.0,
+    "additionalFeesTotal": 0,
+    "OrderTotal": 35.25,
+    "OrderType": "Unspecified",
+    "ShippingMethod": { "PrimaryCode": 101, "PrimaryMethod": "Example Ground", "PrimaryShippingRate": 7.99 },
+    "PaymentMethod": { "PONumber": "ejb-example", "Method": 3, "Name": "Example Visa" },
+    "TaxAmount": 2.26,
+    "OrderID": "900000001",
+    "Errors": [],
+    "SubmitOrder": true
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "Errors": [],
+  "SearchResults": {
+    "NumberOfResult": 2,
+    "Parts": [
+      {
+        "Availability": "120 In Stock",
+        "DataSheetUrl": "https://example.com/test-datasheet.pdf",
+        "Description": "Example e-paper breakout (test fixture)",
+        "ImagePath": "https://example.com/test-image.jpg",
+        "Category": "Example Category",
+        "LeadTime": "14 Days",
+        "LifecycleStatus": null,
+        "Manufacturer": "Example Maker",
+        "ManufacturerPartNumber": "EXAMPLE-4116",
+        "Min": "1",
+        "Mult": "1",
+        "MouserPartNumber": "485-EXAMPLE1",
+        "ProductAttributes": [],
+        "PriceBreaks": [
+          { "Quantity": 1, "Price": "$12.50", "Currency": "USD" },
+          { "Quantity": 10, "Price": "$11.25", "Currency": "USD" }
+        ],
+        "ProductDetailUrl": "https://example.com/test-product-1",
+        "ROHSStatus": "RoHS Compliant",
+        "AvailabilityInStock": "120",
+        "RestrictionMessage": null
+      },
+      {
+        "Availability": "5,000 In Stock",
+        "Description": "Example resistor (test fixture)",
+        "Manufacturer": "Example Maker",
+        "ManufacturerPartNumber": "EXAMPLE-R10K",
+        "Min": "10",
+        "Mult": "10",
+        "MouserPartNumber": "603-EXAMPLE2",
+        "PriceBreaks": [
+          { "Quantity": 10, "Price": "$0.0123", "Currency": "USD" },
+          { "Quantity": 100, "Price": "$0.0089", "Currency": "USD" }
+        ],
+        "AvailabilityInStock": "5000",
+        "RestrictionMessage": null
+      }
+    ]
+  }
+}

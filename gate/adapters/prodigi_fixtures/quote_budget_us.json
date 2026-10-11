@@ -1,0 +1,40 @@
+{
+  "outcome": "CreatedWithIssues",
+  "issues": [
+    {
+      "objectId": null,
+      "errorCode": "destinationCountryCode.UsSalesTaxWarning",
+      "description": "Example: prices may be subject to US sales tax."
+    }
+  ],
+  "quotes": [
+    {
+      "shipmentMethod": "Budget",
+      "costSummary": {
+        "items": { "amount": "21.40", "currency": "USD" },
+        "shipping": { "amount": "6.95", "currency": "USD" },
+        "branding": { "amount": "0.00", "currency": "USD" },
+        "totalTax": { "amount": "0.00", "currency": "USD" },
+        "totalCost": { "amount": "28.35", "currency": "USD" }
+      },
+      "shipments": [
+        {
+          "carrier": { "name": "example-carrier", "service": "Standard" },
+          "fulfillmentLocation": { "countryCode": "US", "labCode": "us-example" },
+          "cost": { "amount": "6.95", "currency": "USD" },
+          "items": ["qit_example1"]
+        }
+      ],
+      "items": [
+        {
+          "id": "qit_example1",
+          "sku": "GLOBAL-FAP-12X16",
+          "copies": 2,
+          "unitCost": { "amount": "10.70", "currency": "USD" },
+          "attributes": {},
+          "assets": [{ "printArea": "default" }]
+        }
+      ]
+    }
+  ]
+}

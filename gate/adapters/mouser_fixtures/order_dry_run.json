@@ -1,0 +1,29 @@
+{
+  "Order": {
+    "OrderLines": [
+      {
+        "Errors": [],
+        "MouserATS": 120,
+        "Quantity": 2,
+        "MouserPartNumber": "485-EXAMPLE1",
+        "MfrPartNumber": "EXAMPLE-4116",
+        "UnitPrice": 12.5,
+        "ExtendedPrice": 25.0,
+        "additionalFees": []
+      }
+    ],
+    "CurrencyCode": "USD",
+    "MerchandiseTotal": 25.0,
+    "additionalFeesTotal": 0,
+    "OrderTotal": 35.25,
+    "OrderType": "Unspecified",
+    "CartGUID": "00000000-0000-0000-0000-000000000000",
+    "ShippingAddress": { "CountryCode": "US", "PostalCode": "10001" },
+    "ShippingMethod": { "PrimaryCode": 101, "PrimaryMethod": "Example Ground", "PrimaryShippingRate": 7.99 },
+    "PaymentMethod": { "PONumber": "ejb-example", "Method": 3, "Name": "Example Visa" },
+    "TaxAmount": 2.26,
+    "OrderID": null,
+    "Errors": [],
+    "SubmitOrder": false
+  }
+}

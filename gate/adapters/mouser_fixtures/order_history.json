@@ -1,0 +1,22 @@
+{
+  "Errors": [],
+  "NumberOfOrders": 2,
+  "OrderHistoryItems": [
+    {
+      "DateCreated": "2026-10-11T12:00:00",
+      "SalesOrderNumber": "test-so-1",
+      "WebOrderNumber": "900000001",
+      "PoNumber": "ejb-example",
+      "BuyerName": "Example Owner",
+      "OrderStatusDisplay": "Example Shipped"
+    },
+    {
+      "DateCreated": "2026-10-10T12:00:00",
+      "SalesOrderNumber": "test-so-2",
+      "WebOrderNumber": "900000002",
+      "PoNumber": "fake-manual",
+      "BuyerName": "Example Owner",
+      "OrderStatusDisplay": "Example Cancelled"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "outcome": "Ok",
+  "order": {
+    "id": "ord_100001",
+    "created": "2026-10-11T14:40:05.12Z",
+    "status": {
+      "stage": "Complete",
+      "issues": [],
+      "details": {
+        "downloadAssets": "Complete",
+        "printReadyAssetsPrepared": "Complete",
+        "allocateProductionLocation": "Complete",
+        "inProduction": "Complete",
+        "shipping": "Complete"
+      }
+    },
+    "charges": [
+      {
+        "id": "chg_100001",
+        "chargeType": "Item",
+        "prodigiInvoiceNumber": null,
+        "totalCost": { "amount": "21.40", "currency": "USD" },
+        "items": []
+      },
+      {
+        "id": "chg_100002",
+        "chargeType": "Shipping",
+        "prodigiInvoiceNumber": null,
+        "totalCost": { "amount": "6.95", "currency": "USD" },
+        "items": []
+      }
+    ],
+    "shipments": [
+      {
+        "id": "shp_100001",
+        "status": "Shipped",
+        "carrier": { "name": "example-carrier", "service": "Standard" },
+        "dispatchDate": "2026-10-13T10:00:00Z",
+        "items": [{ "itemId": "ori_100001" }],
+        "tracking": { "url": "https://tracking.example.com/test-1Z000", "number": "test-1Z000" },
+        "fulfillmentLocation": { "countryCode": "US", "labCode": "us-example" }
+      }
+    ],
+    "items": []
+  },
+  "traceParent": "00-example0000000000000000000000000-example000000000-00"
+}

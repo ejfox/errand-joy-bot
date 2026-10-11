@@ -10,9 +10,11 @@ import { zincFromEnv } from "./zinc.ts";
 import { stannpFromEnv } from "./stannp.ts";
 import { luluFromEnv } from "./lulu.ts";
 import { slant3dFromEnv } from "./slant3d.ts";
+import { prodigiFromEnv } from "./prodigi.ts";
+import { mouserFromEnv } from "./mouser.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
-//   mouser / craftcloud / pcbway          self when shipTo is owner-home, otherwise others
+//   craftcloud / pcbway                   self when shipTo is owner-home, otherwise others
 //   lob / goody                           others (mails or gifts a third party)
 
 /** place() was refused by the guard BEFORE the vendor was called: no money can have moved. */
@@ -120,6 +122,8 @@ export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => V
   stannp: () => stannpFromEnv(),
   lulu: () => luluFromEnv(),
   slant3d: () => slant3dFromEnv(),
+  prodigi: () => prodigiFromEnv(),
+  mouser: () => mouserFromEnv(),
 };
 
 export function knownVendors(): string[] {

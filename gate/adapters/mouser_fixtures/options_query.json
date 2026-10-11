@@ -1,0 +1,40 @@
+{
+  "OrderInitialize": {
+    "CurrencyCode": "USD",
+    "BillingAddress": {
+      "CountryCode": "US",
+      "FirstName": "Example",
+      "LastName": "Owner",
+      "AddressOne": "101 Example St",
+      "City": "Exampleville",
+      "StateOrProvince": "NY",
+      "PostalCode": "10001"
+    },
+    "ShippingAddress": {
+      "CountryCode": "US",
+      "FirstName": "Example",
+      "LastName": "Owner",
+      "AddressOne": "101 Example St",
+      "City": "Exampleville",
+      "StateOrProvince": "NY",
+      "PostalCode": "10001"
+    },
+    "Shipping": {
+      "Methods": [
+        { "Method": "Example Ground", "Rate": 7.99, "Code": 101 },
+        { "Method": "Example 2nd Day", "Rate": 19.5, "Code": 102 }
+      ],
+      "FreightAccounts": []
+    },
+    "Payment": {
+      "PaymentTypes": [
+        { "Method": 3, "Name": "Example Visa", "CreditCardLastFourDigits": "0000" },
+        { "Method": 3, "Name": "Example Other Card", "CreditCardLastFourDigits": "1111" },
+        { "Method": 1, "Name": "Example Terms", "CreditCardLastFourDigits": null }
+      ],
+      "TaxCertificates": [],
+      "VatAccounts": []
+    },
+    "Errors": []
+  }
+}
