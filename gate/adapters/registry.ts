@@ -12,6 +12,7 @@ import { luluFromEnv } from "./lulu.ts";
 import { slant3dFromEnv } from "./slant3d.ts";
 import { prodigiFromEnv } from "./prodigi.ts";
 import { mouserFromEnv } from "./mouser.ts";
+import { oshParkFromEnv } from "./oshpark.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
 //   craftcloud / pcbway                   self when shipTo is owner-home, otherwise others
@@ -124,6 +125,7 @@ export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => V
   slant3d: () => slant3dFromEnv(),
   prodigi: () => prodigiFromEnv(),
   mouser: () => mouserFromEnv(),
+  oshpark: () => oshParkFromEnv(),
 };
 
 export function knownVendors(): string[] {

@@ -330,6 +330,7 @@ export const VENDOR_LABELS: Record<string, string> = {
   mouser: "electronics (Mouser)",
   treenation: "trees (Tree-Nation)",
   skyfi: "satellite image (SkyFi)",
+  oshpark: "circuit boards (OSH Park)",
 };
 
 export function vendorLabel(vendor: string): string {
@@ -347,6 +348,7 @@ export const VENDOR_ACTION_HINTS: Record<string, string> = {
   mouser: "check the order in My Mouser (order history)",
   skyfi: "check the order in the SkyFi app (app.skyfi.com)",
   zinc: "check the order in the Zinc dashboard (app.zinc.com)",
+  oshpark: "the board is uploaded, not ordered: open its oshpark.com/uploads link (on the gate request) and check out yourself",
 };
 
 /** ONE DM per request: an order exists but is blocked on the vendor side until the owner acts. */
