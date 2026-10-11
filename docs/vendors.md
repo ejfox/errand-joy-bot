@@ -734,3 +734,83 @@ with `MOUSER_SEARCH_API_KEY` in the environment (optional `MOUSER_LIVE_PART`, de
 
 Lob (physical mail). Not built. Each needs its
 own ToS read, key, vendor-side cap and `reachFor`. PRs welcome.
+
+## Lob (postcards)
+
+`gate/adapters/lob.ts`, id `lob`. Prints and mails one postcard per request through
+[Lob](https://docs.lob.com) (US First Class). `maxReach` is `others`; `reachFor` is `self` when
+`shipTo` is `owner-home`, otherwise `others`, so a postcard to anyone else always asks.
+
+**Request shape.** Exactly one item, `qty: 1`:
+
+- `sku`: `postcard` or `postcard:4x6` (4x6), or `postcard:6x9`.
+- `url`: the front artwork, an https URL ending in `.pdf`, `.png` or `.jpg` with no query string
+  (Lob's `remote_file_url` rule; ≤5 MB, 300 DPI, full bleed 4.25"x6.25" or 6.25"x9.25").
+- The back is the message: `item.message` when present, else `item.title`. Max 350 characters
+  (4x6) or 600 (6x9). It is HTML-escaped (braces too, so it can never be read as a Lob merge
+  variable) into a left-column layout that stays clear of the address and postage block.
+- `shipTo`: `owner-home` (from `OWNER_SHIP_TO_JSON`, the same value Zinc reads, base64 or JSON) or
+  a US `{name, line1, city, state, zip}`. Lob needs no phone. The owner's address, when configured,
+  is the return address.
+
+| Env | |
+|---|---|
+| `LOB_API_KEY` | a secret `test_…` or `live_…` key (publishable `_pub_` keys are refused). Sent as the basic-auth username, never logged |
+| `LOB_BASE_URL` | optional, default `https://api.lob.com/v1` (https only) |
+| `LOB_POSTCARD_CENTS` | optional 4x6 per-piece price, default `91` |
+| `LOB_POSTCARD_6X9_CENTS` | optional 6x9 per-piece price, default `103` |
+| `LOB_CARD_FEE_RATE` | optional, default `0.03` (Lob's card service fee); `0` if the account pays by ACH |
+| `OWNER_SHIP_TO_JSON` | the owner's address, shared with Zinc |
+
+Allow the host: `ops/install.sh --allow-net api.lob.com`.
+
+**Pricing.** Lob has no price-estimate endpoint and the postcard object carries no price, so
+`quote()` uses the published per-piece table, offline. Lob's rates are all-in (print + postage +
+delivery), so `shippingCents = 0`; Lob charges no sales tax on print or postage (since
+2026-10-01), so `taxCents = 0`. Developer plan, First Class, as of 2026-07-12
+([pricing details](https://help.lob.com/print-and-mail/ready-to-get-started/pricing-details),
+[pricing](https://lob.com/pricing/print-mail)): 4x6 $0.905 → 91¢, 6x9 $1.026 → 103¢. From
+2026-11-01: $0.909 and $1.030 (same rounded cents). Total = price + `ceil(price × 0.03)` card fee
+= **94¢** (4x6) or **107¢** (6x9). Update the env values if the plan or prices change.
+
+**How it maps:**
+
+- `place()`: `POST /postcards` with an `Idempotency-Key` header (the gate key; Lob returns the
+  existing postcard for a repeat within 24 h), `use_type: "operational"` (Lob requires one; this is
+  personal mail, not marketing), `mail_type: "usps_first_class"`, and metadata
+  `ejb_idempotency_key`, `ejb_cents`, `task_id`. `chargedCents` = the table cost, refused if over
+  the hard cap. Lob validation errors (`invalid_file_url`, `failed_deliverability_strictness`,
+  `payment_method_unverified`, `rate_limit_exceeded`…) mean no postcard exists → `GuardRefused`
+  → `failed`. 5xx, 408 and network errors stay `LobError` → `outcome_unknown`.
+- `status()`: deleted → `cancelled`; render `failed` → `failed`; a `Delivered` tracking event →
+  `delivered`; `Mailed` / `In Transit` / `In Local Area` / `Processed for Delivery` / `Re-Routed` /
+  `International Exit` → `shipped`; none → `open`. `Returned to Sender` → `shipped` with
+  `raw.returned = true`, never `cancelled`: it was printed and mailed, so it is billed and keeps
+  counting against the windows. Postcards have no carrier tracking number. **Test-mode postcards
+  never get tracking events, so they stay `open`.**
+- `cancel()`: `DELETE /postcards/{id}`. Works only inside Lob's cancellation window (5 minutes by
+  default on new accounts) and then the postcard is not billed; after that `not_deletable` → `false`.
+  Longer windows and `send_date` scheduling are paid-edition features, so the adapter sets neither.
+- `listCharges()`: `GET /postcards?date_created[gte]=…`, following `next_url`. One charge per
+  postcard not deleted; amount = `metadata.ejb_cents`, else the table cost for its size. A postcard
+  made by hand in the dashboard shows up here as a phantom charge and trips STOP.
+- `pause()` is a local flag. **The real kill is disabling the live key** in the Lob dashboard
+  (Settings → API Keys).
+
+**Vendor-side caps.** None. Lob bills usage monthly in arrears (card +3% or ACH), has no per-key
+spend limit, and does not stop mail on overage. The gate's caps and the lob/month window are the
+only caps, so keep `vendor_month_cents` small for `lob`.
+
+1. Sign up at <https://dashboard.lob.com> on the free Developer plan. Add a billing address and a
+   payment method (live requests fail with `billing_address_required` / `payment_method_unverified`
+   until you do). Optionally set the low-balance notification under billing.
+2. Live postcards need `use_type`; the adapter sends `operational`, so no account default is needed.
+3. Take the live secret key (`live_…`) under Settings → API Keys, name it `lob-<host>-<yyyy-mm>`
+   (e.g. `lob-ejfvps-2026-10`; if the dashboard has no name field, record that name in your key
+   inventory) and paste it with `ops/set-key.sh LOB_API_KEY`.
+
+**Test mode.** A `test_…` key makes free postcards that never print or mail. The opt-in live test
+makes ONE (plus an idempotent retry of the same key) to the docs' sample address with the docs'
+sample artwork, then status, cancel and listCharges:
+`LOB_LIVE=1 LOB_API_KEY=test_… deno test --allow-read --allow-env --allow-net=api.lob.com --filter LIVE gate/adapters/lob_test.ts`
+(it refuses to run with a `live_` key).

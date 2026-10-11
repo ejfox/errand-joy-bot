@@ -1,0 +1,42 @@
+{
+  "_source": "Shape of a Lob GET /v1/postcards/{id} response in live mode with `tracking_event_normal` entries (docs.lob.com). All values are fake.",
+  "id": "psc_fake0000000001",
+  "metadata": { "ejb_idempotency_key": "example-idem-1", "ejb_cents": "94", "task_id": "example-task" },
+  "url": "https://example.com/postcards/psc_fake0000000001.pdf",
+  "carrier": "USPS",
+  "front_template_id": null,
+  "back_template_id": null,
+  "size": "4x6",
+  "mail_type": "usps_first_class",
+  "expected_delivery_date": "2026-10-16",
+  "date_created": "2026-10-11T15:00:00.000Z",
+  "date_modified": "2026-10-13T09:00:00.000Z",
+  "send_date": "2026-10-11T15:05:00.000Z",
+  "use_type": "operational",
+  "status": "rendered",
+  "tracking_events": [
+    {
+      "id": "evnt_fake000000001",
+      "type": "normal",
+      "name": "In Transit",
+      "details": null,
+      "location": "10001",
+      "time": "2026-10-13T08:00:00.000Z",
+      "date_created": "2026-10-13T09:00:00.000Z",
+      "date_modified": "2026-10-13T09:00:00.000Z",
+      "object": "tracking_event"
+    },
+    {
+      "id": "evnt_fake000000002",
+      "type": "normal",
+      "name": "In Local Area",
+      "details": null,
+      "location": "10001",
+      "time": "2026-10-14T08:00:00.000Z",
+      "date_created": "2026-10-14T09:00:00.000Z",
+      "date_modified": "2026-10-14T09:00:00.000Z",
+      "object": "tracking_event"
+    }
+  ],
+  "object": "postcard"
+}

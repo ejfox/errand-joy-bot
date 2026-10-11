@@ -328,6 +328,7 @@ export const VENDOR_LABELS: Record<string, string> = {
   lulu: "printed zine (Lulu)",
   prodigi: "art print (Prodigi)",
   mouser: "electronics (Mouser)",
+  lob: "postcard (Lob)",
   treenation: "trees (Tree-Nation)",
   skyfi: "satellite image (SkyFi)",
 };
@@ -345,6 +346,7 @@ export const VENDOR_ACTION_HINTS: Record<string, string> = {
   lulu: "check the print job in the Lulu dashboard (developers.lulu.com → Print Jobs)",
   slant3d: "check the order in the Slant 3D dashboard",
   mouser: "check the order in My Mouser (order history)",
+  lob: "check the postcard in the Lob dashboard",
   skyfi: "check the order in the SkyFi app (app.skyfi.com)",
   zinc: "check the order in the Zinc dashboard (app.zinc.com)",
 };
