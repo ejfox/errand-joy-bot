@@ -203,7 +203,7 @@ export function validateConfig(raw: unknown, source = "config"): { config: GateC
     problems.push("owner_home_label must be 1-40 chars of a-z, 0-9, _ or -");
   } else ownerHomeLabel = label;
 
-  const worldCategories = strList("world_categories", ["tree", "telescope"], /^[a-z0-9_-]{1,40}$/);
+  const worldCategories = strList("world_categories", ["tree", "telescope", "satellite"], /^[a-z0-9_-]{1,40}$/);
   const minReasonChars = num("min_reason_chars");
   if (minReasonChars > 1000) problems.push("min_reason_chars must be at most 1000 (the reason field's max length)");
 

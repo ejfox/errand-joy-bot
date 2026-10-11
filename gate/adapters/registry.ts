@@ -4,12 +4,13 @@
 // or reach-floor checks. Adapters may keep their own checks too (the mock does): belt and braces.
 import { OWNER_HOME, type PurchaseRequest, type Reach, REACH_RANK, type VendorAdapter } from "../types.ts";
 import { MockAdapter } from "./mock.ts";
+import { skyFiFromEnv } from "./skyfi.ts";
+import { treeNationFromEnv } from "./treenation.ts";
 import { zincFromEnv } from "./zinc.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
 //   mouser / craftcloud / pcbway          self when shipTo is owner-home, otherwise others
 //   lob / stannp / goody                  others (mails or gifts a third party)
-//   tree-nation / skyfi                   world
 
 /** place() was refused by the guard BEFORE the vendor was called: no money can have moved. */
 export class GuardRefused extends Error {
@@ -111,6 +112,8 @@ export interface RegistryOptions extends GuardOptions {
 export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => VendorAdapter>> = {
   mock: (o) => new MockAdapter({ taxRate: o.mockTaxRate, worldCategories: [...(o.worldCategories ?? [])] }),
   zinc: () => zincFromEnv(),
+  treenation: () => treeNationFromEnv(),
+  skyfi: () => skyFiFromEnv(),
 };
 
 export function knownVendors(): string[] {

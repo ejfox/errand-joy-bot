@@ -26,7 +26,7 @@
 
 # Optional. Request categories whose effects reach the world, not just you; they get
 # reach "world" at minimum.
-# world_categories = ["tree", "telescope"]
+# world_categories = ["tree", "telescope", "satellite"]
 
 # IANA time zone used for quiet hours and for the calendar day / ISO week / month
 # windows the caps are measured in.

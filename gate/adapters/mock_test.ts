@@ -98,7 +98,7 @@ Deno.test("status advances and listCharges includes orders plus phantoms", async
 const OPEN = { isStopped: () => false, dryRun: false };
 
 Deno.test("registry is a closed allowlist and hands out only guarded adapters", () => {
-  assert.deepEqual(knownVendors(), ["mock", "zinc"]);
+  assert.deepEqual(knownVendors(), ["mock", "zinc", "treenation", "skyfi"]);
   const reg = buildRegistry(["mock"], OPEN);
   assert.deepEqual(Object.keys(reg), ["mock"]);
   assert.equal(reg.mock.guarded, true);

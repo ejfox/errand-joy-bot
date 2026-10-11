@@ -1,0 +1,32 @@
+{
+  "_source": "POST /api/plant responses. ok_with_trees follows the integration guide's example (https://docs.tree-nation.com/tree-nation-api-gifting-trees-integration-guide.md); ok_spec and the errors follow PlantResponse in https://docs.tree-nation.com/openapi.json (HTTP 200 even for business errors). Fake values.",
+  "ok_with_trees": {
+    "status": "ok",
+    "trees": [
+      {
+        "id": 9001,
+        "token": "fake-token-1",
+        "collect_url": "https://youcannevertestenough.tree-nation.com/collect/fake-token-1",
+        "certificate_url": "https://youcannevertestenough.tree-nation.com/certificate/fake-token-1"
+      },
+      {
+        "id": 9002,
+        "token": "fake-token-2",
+        "collect_url": "https://youcannevertestenough.tree-nation.com/collect/fake-token-2",
+        "certificate_url": "https://youcannevertestenough.tree-nation.com/certificate/fake-token-2"
+      }
+    ],
+    "payment_id": 63
+  },
+  "ok_spec": { "status": "ok", "payment_id": 64, "errorCode": null, "errorMessage": null },
+  "processing": { "status": "processing", "payment_id": 65, "errorCode": null, "errorMessage": null },
+  "ok_without_payment_id": { "status": "ok", "errorCode": null, "errorMessage": null },
+  "error_species": { "status": "error", "errorCode": "species", "errorMessage": "test: species not available" },
+  "error_quantity": { "status": "error", "errorCode": "quantity", "errorMessage": "test: invalid quantity" },
+  "error_already_processed": {
+    "status": "error",
+    "errorCode": "already_processed",
+    "errorMessage": "test: order already processed"
+  },
+  "error_unknown": { "status": "error", "errorCode": "credit", "errorMessage": "test: not enough credit" }
+}

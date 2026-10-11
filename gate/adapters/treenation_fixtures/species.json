@@ -1,0 +1,31 @@
+{
+  "_source": "SpeciesDetails (GET /api/species/{species_id}), https://docs.tree-nation.com/openapi.json. Fake values.",
+  "species_101": {
+    "id": 101,
+    "name": "Example mangrove",
+    "project_id": 7,
+    "life_time_CO2": 40,
+    "stock": 5000,
+    "price": 0.35,
+    "common_names": "test black mangrove",
+    "family": "Exampleaceae",
+    "image": "https://example.com/fake-species-101.jpg",
+    "category": { "id": 4, "name": "Plant" },
+    "price_per_tonne": 8.75
+  },
+  "species_102_low_stock": {
+    "id": 102,
+    "name": "Example oak",
+    "project_id": 7,
+    "life_time_CO2": 300,
+    "stock": 2,
+    "price": 1,
+    "category": { "id": 3, "name": "Majestic" }
+  },
+  "project_7_species": [
+    { "id": 100, "name": "Example sold-out palm", "project_id": 7, "life_time_CO2": 20, "stock": 0, "price": 0.1 },
+    { "id": 101, "name": "Example mangrove", "project_id": 7, "life_time_CO2": 40, "stock": 5000, "price": 0.35 },
+    { "id": 102, "name": "Example oak", "project_id": 7, "life_time_CO2": 300, "stock": 2, "price": 1 },
+    { "id": 103, "name": "Example acacia", "project_id": 7, "life_time_CO2": 50, "stock": 900, "price": 0.5 }
+  ]
+}
