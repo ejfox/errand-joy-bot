@@ -1,0 +1,37 @@
+{
+  "_source": "Zinc error bodies as documented: nested (https://www.zinc.com/docs/v2/agent-sandbox/going-live), flat (https://www.zinc.com/docs/v2/api-reference/introduction/error-handling, .../idempotency, .../sandbox), metered-402 detail (.../wallet).",
+  "insufficient_funds_nested": {
+    "status": 402,
+    "body": {
+      "error": {
+        "code": "insufficient_funds",
+        "message": "Insufficient wallet balance. Required: $12.99, Available: $4.00",
+        "details": { "required": 1299, "available": 400, "short_by": 899, "fund_with": [] }
+      }
+    }
+  },
+  "invalid_address_flat": {
+    "status": 400,
+    "body": { "code": "invalid_shipping_address", "message": "The shipping address failed validation (test scenario)" }
+  },
+  "already_exists_flat": {
+    "status": 409,
+    "body": {
+      "code": "already_exists",
+      "message": "Order with idempotency key 'example-idem-1' already exists",
+      "details": { "resource": "Order", "identifier": "example-idem-1" }
+    }
+  },
+  "not_cancellable_flat": {
+    "status": 400,
+    "body": { "code": "order_not_cancellable", "message": "Order cannot be cancelled due to its current status" }
+  },
+  "data_402_detail": {
+    "status": 402,
+    "body": { "detail": "Insufficient wallet balance for data API call" }
+  },
+  "server_error": {
+    "status": 502,
+    "body": { "code": "external_service_error", "message": "Unable to connect to external service. Please try again." }
+  }
+}

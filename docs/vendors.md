@@ -4,7 +4,8 @@ A vendor is a code adapter, not a config entry. The allowlist is closed: the gat
 buys from adapters registered in `gate/adapters/registry.ts` **and** listed in
 `vendors` in `config.toml`. Adding one is a reviewed code change.
 
-Shipped today: `mock`, a deterministic fake vendor that moves no money. Use it for the
+Shipped today: `zinc` (see [Zinc](#zinc-retail-amazon-walmart-target-mcmaster-carr) below) and
+`mock`, a deterministic fake vendor that moves no money. Use the mock for the
 rehearsal stage in [runbook.md](runbook.md).
 
 ## The adapter interface
@@ -88,8 +89,74 @@ one that still holds if the gate host is compromised.
 | tree planting, satellite imagery tasking | `world` | `world` |
 | gift services | `others` | always `others` |
 
+## Zinc (retail: Amazon, Walmart, Target, McMaster-Carr...)
+
+`gate/adapters/zinc.ts`, against Zinc 2.0 (`https://api.zinc.com`, docs:
+<https://www.zinc.com/docs/llms-full.txt>, spec: <https://api.zinc.com/openapi.json>).
+Paid from a prepaid Zinc wallet; no card on the request.
+
+**Env** (gate `.env` only):
+
+| Var | What |
+|---|---|
+| `ZINC_API_KEY` | `zn_live_...` for real orders, `zn_test_...` for the sandbox. Test mode is per key, not per host |
+| `ZINC_BASE_URL` | optional, default `https://api.zinc.com` (https only) |
+| `ZINC_RETAILER` | optional retailer slug for quotes, default `amazon` |
+| `ZINC_TAX_RATE` | optional tax buffer on the quote, default `0.10` (offers carry no tax) |
+| `OWNER_SHIP_TO_JSON` | the owner's address in Zinc's shape: `{"first_name","last_name","address_line1","address_line2","city","state","postal_code","phone_number","country":"US"}`. Private. `place()` refuses if it is missing or any required field is empty, the ZIP isn't 5 or 9 digits, or `state` isn't a 2-letter code |
+
+Allow the host: `ops/install.sh --allow-net api.zinc.com`.
+
+**How it maps:**
+
+- `quote()`: per item, `GET /products/{sku}/offers?retailer=…` → the cheapest available
+  *New* offer counting its cheapest shipping (and under `maxUnitCents`), × qty. Tax =
+  subtotal × `ZINC_TAX_RATE`. `totalCents` = subtotal + tax + shipping + Zinc's $1 order fee,
+  so tiers see the fee too (the parts don't sum to the total; `Quote` has no fee field).
+  Offers calls cost $0.01 each from the live wallet; free in the sandbox.
+- `place()`: sends `max_price = min(hardCap, floor(quote × 1.10)) − $1 fee`, so the wallet
+  hold (`max_price + $1`) never exceeds the gate's hard cap. The agent never picks it.
+  Also sends `idempotency_key` (the gate key, or a sha256-derived UUID when it's over 36
+  chars) and the same value in `metadata.ejb_idempotency_key` and `po_number`. A duplicate
+  (`already_exists`) is treated as success and the order is looked up by that metadata.
+  For Amazon the ordered URL is always built from the quoted ASIN; for other retailers the
+  item `url` must contain the quoted `sku`. A third-party `shipTo` is refused (`ShipTo` has
+  no phone number, which Zinc requires).
+- `chargedCents` = the up-front hold (`max_price + $1`). Zinc refunds the difference later,
+  so the ledger over-counts slightly (the safe direction).
+- Errors: synchronous rejections where Zinc creates no order (`insufficient_funds`,
+  `invalid_shipping_address`, `url_unreachable`, `validation_error`, auth errors…) become
+  `GuardRefused(<code>)` → the request is `failed`, not `outcome_unknown`. 5xx and network
+  errors stay `ZincError` → `outcome_unknown` + STOP. `max_price_exceeded` is asynchronous: the
+  order goes `order_failed` and `status()` reports `cancelled` with `raw.error_type`.
+- `status()`: `pending`/`in_progress`/`order_placed` → `open`; a package `in_transit` →
+  `shipped`; every package `delivered` → `delivered`; `order_failed`, `cancelled`,
+  `cancelled_by_retailer` → `cancelled` (wallet refunded).
+- `cancel()`: only works while the order is still queued (`pending`); otherwise `false`.
+- `listCharges()`: Zinc has no wallet-transactions endpoint, so it reads `GET /orders?created_after=`
+  and reports one charge per order that wasn't refunded, sized as the hold, same as `place()`.
+  An order you place by hand in the dashboard shows up here and trips STOP as a phantom
+  charge unless the ledger knows about it.
+- `pause()` is a local flag. **The real kill is revoking the key** at app.zinc.com → Settings.
+
+**Vendor-side caps.** Zinc has no per-key spend limit. The caps are the wallet balance and
+`max_price`:
+
+1. Sign in at <https://app.zinc.com>, top up the wallet by ACH (0.8%, capped at $5) with a
+   small amount (e.g. $50). **Leave auto top-up OFF**: then the balance is a hard cap.
+2. Create a dedicated live key named `zinc-<host>-<yyyy-mm>` (e.g. `zinc-ejfvps-2026-10`),
+   paste it with `ops/set-key.sh ZINC_API_KEY`.
+3. Optionally register a webhook (Settings, or `PUT /webhooks/endpoint`) for `order.*` events.
+   Test-mode webhooks are configured separately from live ones.
+
+**Sandbox.** `POST https://api.zinc.com/sandbox/keys` mints a `zn_test_` key with no account
+or email. Rehearsal products live at `https://zinc.com/shop/products/test-*` (`test-success`,
+`test-price-exceeded`, `test-insufficient-funds`, …). The opt-in live test:
+`ZINC_SANDBOX_LIVE=1 ZINC_API_KEY=zn_test_… deno test --allow-read --allow-env --allow-net=api.zinc.com --filter LIVE gate/adapters/zinc_test.ts`
+(it refuses to run with anything but a `zn_test_` key).
+
 ## Roadmap adapters
 
-Zinc (retail via API), Mouser (electronics), Lob and Stannp (physical mail),
+Mouser (electronics), Lob and Stannp (physical mail),
 Tree-Nation (tree planting), SkyFi (satellite imagery). None are built. Each needs its
 own ToS read, key, vendor-side cap and `reachFor`. PRs welcome.

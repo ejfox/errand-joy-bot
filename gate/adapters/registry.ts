@@ -4,9 +4,10 @@
 // or reach-floor checks. Adapters may keep their own checks too (the mock does): belt and braces.
 import { OWNER_HOME, type PurchaseRequest, type Reach, REACH_RANK, type VendorAdapter } from "../types.ts";
 import { MockAdapter } from "./mock.ts";
+import { zincFromEnv } from "./zinc.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
-//   zinc / mouser / craftcloud / pcbway   self when shipTo is owner-home, otherwise others
+//   mouser / craftcloud / pcbway          self when shipTo is owner-home, otherwise others
 //   lob / stannp / goody                  others (mails or gifts a third party)
 //   tree-nation / skyfi                   world
 
@@ -109,6 +110,7 @@ export interface RegistryOptions extends GuardOptions {
 /** Every vendor this build knows how to talk to. config `vendors` must be a subset. */
 export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => VendorAdapter>> = {
   mock: (o) => new MockAdapter({ taxRate: o.mockTaxRate, worldCategories: [...(o.worldCategories ?? [])] }),
+  zinc: () => zincFromEnv(),
 };
 
 export function knownVendors(): string[] {

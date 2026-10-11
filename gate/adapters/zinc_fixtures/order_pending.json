@@ -1,0 +1,48 @@
+{
+  "_source": "Shape of a real Zinc 2.0 POST /orders 201 response (status pending, job_result null). All values are fake.",
+  "id": "00000000-0000-4000-8000-000000000001",
+  "status": "pending",
+  "max_price": 1035,
+  "attempts": 0,
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000a1",
+      "url": "https://www.amazon.com/dp/B00KFP6NHO",
+      "quantity": 1,
+      "variant": null,
+      "condition_in": null,
+      "condition_not_in": null,
+      "status": "pending",
+      "cancellation_reason": null,
+      "error_type": null,
+      "tracking_number_ids": null,
+      "created_at": "2026-10-11T15:00:00.000000Z",
+      "updated_at": "2026-10-11T15:00:00.000000Z"
+    }
+  ],
+  "shipping_address": {
+    "first_name": "Example",
+    "last_name": "Owner",
+    "address_line1": "101 Example St",
+    "address_line2": null,
+    "city": "Exampleville",
+    "state": "NY",
+    "postal_code": "10001",
+    "country": "US",
+    "phone_number": "+15555550100"
+  },
+  "metadata": { "ejb_idempotency_key": "example-idem-1", "task_id": "example-task" },
+  "po_number": "example-idem-1",
+  "handling_days_max": null,
+  "is_gift": false,
+  "gift_message": null,
+  "retailer_credentials_id": null,
+  "job_result": null,
+  "merchant_order_ids": [],
+  "tracking_numbers": [],
+  "payment": null,
+  "returns": [],
+  "fulfillment": { "gift": null, "items": null, "quantity": null, "concessions": [] },
+  "created_at": "2026-10-11T15:00:00.000000Z",
+  "updated_at": "2026-10-11T15:00:00.000000Z"
+}

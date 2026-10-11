@@ -1,0 +1,49 @@
+{
+  "_source": "Shape from the Amazon example of GET /products/{product_id}/offers in https://api.zinc.com/openapi.json (2026-10-11). Prices edited for the test math.",
+  "status": "completed",
+  "retailer": "amazon",
+  "asin": "B00KFP6NHO",
+  "offers": [
+    {
+      "offer_id": "example-offer-new-1p",
+      "price": 799,
+      "condition": "New",
+      "available": true,
+      "seller": { "id": "example-seller-1", "name": "Amazon.com", "first_party": true },
+      "marketplace_fulfilled": true,
+      "prime_only": false,
+      "international": false,
+      "addon": false,
+      "handling_days": { "min": 0, "max": 0 },
+      "shipping_options": [
+        { "name": "standard", "price": 0, "delivery_days": { "min": 2, "max": 5 } },
+        { "name": "one-day", "price": 599, "delivery_days": { "min": 1, "max": 1 } }
+      ]
+    },
+    {
+      "offer_id": "example-offer-used",
+      "price": 628,
+      "condition": "Used - Very Good",
+      "available": true,
+      "seller": { "id": "example-seller-2", "name": "Amazon Warehouse", "first_party": false },
+      "shipping_options": [{ "name": "standard", "price": 0 }]
+    },
+    {
+      "offer_id": "example-offer-new-3p",
+      "price": 749,
+      "condition": "New",
+      "available": true,
+      "seller": { "id": "example-seller-3", "name": "Example Seller", "first_party": false },
+      "shipping_options": [{ "name": "standard", "price": 399 }]
+    },
+    {
+      "offer_id": "example-offer-new-oos",
+      "price": 500,
+      "condition": "New",
+      "available": false,
+      "seller": { "id": "example-seller-4", "name": "Example Seller Two", "first_party": false },
+      "shipping_options": [{ "name": "standard", "price": 0 }]
+    }
+  ],
+  "timestamp": 1760000000
+}

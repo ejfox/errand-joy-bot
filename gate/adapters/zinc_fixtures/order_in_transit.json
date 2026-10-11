@@ -1,0 +1,28 @@
+{
+  "_source": "GET /orders/{id} after placement, per https://www.zinc.com/docs/v2/agent-sandbox/quickstart (order_placed, tracking in_transit). Fake values.",
+  "id": "00000000-0000-4000-8000-000000000001",
+  "status": "order_placed",
+  "max_price": 1035,
+  "attempts": 1,
+  "items": [],
+  "metadata": { "ejb_idempotency_key": "example-idem-1" },
+  "job_result": {
+    "success": true,
+    "error": null,
+    "error_type": null,
+    "price_components": { "subtotal": 799, "tax": 64, "shipping": 0, "discount": 0, "fees": 0, "total": 863, "currency": "USD" },
+    "estimated_delivery": "2026-10-15"
+  },
+  "merchant_order_ids": ["TEST-00000000"],
+  "tracking_numbers": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000b1",
+      "carrier": "usps",
+      "tracking_number": "ZINC_TEST_123456789",
+      "status": "in_transit",
+      "created_at": "2026-10-11T15:00:02.000000Z"
+    }
+  ],
+  "created_at": "2026-10-11T15:00:00.000000Z",
+  "updated_at": "2026-10-11T15:00:03.000000Z"
+}
