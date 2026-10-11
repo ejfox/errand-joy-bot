@@ -167,9 +167,10 @@ echo "user: $SVC_USER:$SVC_GROUP   data: $DATA_DIR   DRY_RUN=$DRY_RUN_VAL"
 echo "allow-net: $ALLOW_NET"
 echo "run: $RUN_FLAG"
 
-# OpenRouter, Anthropic, OpenAI, Stripe live, AWS, GitHub and Slack key prefixes.
+# OpenRouter, Anthropic, OpenAI, Stripe live, AWS, GitHub and Slack keys: prefix PLUS a
+# real-length body, so docs that merely name a prefix (CONTRIBUTING.md, .gitleaks.toml) pass.
 # Split with '' so this script doesn't match its own pattern.
-PATTERN='sk-''or-v1-|sk-''ant-|sk-''proj-|sk_''live_|AKIA[0-9A-Z]{16}|gh''p_|xo''x[bp]-'
+PATTERN='sk-''or-v1-[a-f0-9]{32}|sk-''ant-[A-Za-z0-9_-]{32}|sk-''proj-[A-Za-z0-9_-]{32}|sk_''live_[A-Za-z0-9]{20}|AKIA[0-9A-Z]{16}|gh''p_[A-Za-z0-9]{30}|xo''x[bp]-[0-9]{6,}-[A-Za-z0-9-]{10}'
 if command -v rg >/dev/null; then
   hits="$(rg -l -e "$PATTERN" --hidden --glob '!.git' --glob '!.env' --glob '!.env.*' \
            --glob '!data/**' --glob '!backups/**' --glob '!.deno-cache/**' "$INSTALL_DIR" || true)"
