@@ -106,7 +106,9 @@ pulls verdicts. Only the relay is reachable from the internet.
 
 A request's life: **received → quoted → decided → DM delivered →** (auto: veto window /
 ask: owner taps Approve / fund: veto window) **→ approved → re-decided → placed →
-delivered → closed**. Nothing reaches `placing` without a delivered DM.
+delivered → closed**. Silent purchases (below) skip the DM: **decided → approved →
+re-decided → placed → delivered → why-note DM → closed**. Nothing *else* reaches
+`placing` without a delivered DM.
 
 ## Tiers, REACH, caps and the joy budget
 
@@ -117,10 +119,20 @@ agent's estimate:
 
 | Quoted total | Tier | What happens |
 |---|---|---|
-| under $69 | auto | DM with a veto link, 10-minute cancel window, then placed |
-| $69 to $500 | ask | DM with separate Approve and Deny links and the remaining cap headroom. Nothing happens until you tap. Expires in 24h. Still limited by the caps below |
-| $500 to $1,000 | fund | automatic only if the robot fund covers all of it; 2-hour veto window; paid from the fund. The fund starts at $0, so this tier is inert until you add money |
+| under $40 | auto, **silent** | no pre-order DM, no cancel window: placed on the next tick. You get a why-note DM on delivery (what it is, why the robot picked it, a link). Reach `self`/`world` only |
+| $40 to $69 | auto | DM with a veto link, 10-minute cancel window, then placed |
+| $69 to $500 | ask | **sealed** DM: the amount, your remaining cap headroom, the vendor category and the agent's hint, with separate Approve and Deny links. No item name. Nothing happens until you tap. Expires in 24h. Still limited by the caps below |
+| $500 to $1,000 | fund | automatic only if the robot fund covers all of it; **sealed** 2-hour veto DM; paid from the fund. The fund starts at $0, so this tier is inert until you add money |
 | over $1,000 | refuse | always denied |
+
+**Silent and sealed** (`[notify]` in `config.toml`): `silent_below_cents = 4000` sets the
+silent slice of the auto tier (0 turns it off) and `sealed = true` keeps item names out of
+ask and fund DMs and the relay page; the agent writes a short `hint` instead ("for clear
+nights"), which the gate rejects if it contains a word of the item's title. Every silent
+or sealed purchase ends with a why-note DM on delivery and does not close until that DM
+is delivered. Caps, velocity, STOP, REACH and the ledger apply to all of them unchanged.
+Anything with reach `others` is never silent and never sealed: the DM always shows the
+item, the recipient and the reason.
 
 **REACH** is who an action touches: `self` < `world` < `others`. The effective reach is
 the higher of what the agent declares and the vendor adapter's floor, so an agent can't
@@ -141,12 +153,14 @@ errors.
 **Velocity:** more than 5 requests in 10 minutes trips the kill switch.
 
 **Joy budget:** $40/week, counted *inside* the monthly cap. Auto tier only, reach `self`
-only. The pre-order DM is a sealed envelope ("robot spent $23 on something, tap to
-veto"); the why-note arrives on delivery, and you can rate it 1 to 5 so the robot learns
+only. Picks under $40 are silent; picks from $40 get a sealed pre-order DM ("robot spent
+$55 on something, tap to veto"), which only happens if you raise the weekly joy cap past
+$40. The why-note arrives on delivery, and you can rate it 1 to 5 so the robot learns
 your taste.
 
 **Quiet hours** (22:00 to 07:30 in your time zone by default): DMs are queued, and since
-nothing is placed before its DM is delivered, purchases wait too.
+nothing non-silent is placed before its DM is delivered, those purchases wait too.
+Delivery why-notes wait for the morning.
 
 ## For agents: making a request
 
@@ -164,8 +178,16 @@ Agents hold only `GATE_AGENT_TOKEN` and submit a `PurchaseRequest` (`gate/types.
 - `reason` must be at least `min_reason_chars` long (60 by default), or the gate returns 400.
 - `shipTo` is `"owner-home"` (or your `owner_home_label`) for your own address, or an
   address object, which makes the reach `others` and always asks.
-- `whyNote` (optional, 1 to 500 chars) is the note delivered with a joy purchase when it
-  arrives: why the robot thought you'd like it.
+- `whyNote` (optional, 1 to 500 chars) is the note delivered with every silent, sealed or
+  joy purchase when it arrives: what it is and why the robot picked it (falls back to
+  `reason`).
+- `hint` (optional, 1 to 80 chars) is the teaser a sealed DM shows instead of the item
+  ("for clear nights"). It must not contain any 4+ letter word from an item title, or the
+  gate returns 400. Without one, sealed DMs say "something for you".
+- Orders placed outside the gate can be recorded with
+  `bin/buy import-order --vendor zinc --order-id <id> --cents <n> --note "<text>"`
+  (admin): they count against the caps and reconcile matches their charge. For Zinc,
+  `--cents` is the order's `max_price` + 100 (the $1 fee).
 - The same `idempotencyKey` with a different payload trips STOP; reuse keys only for
   true retries.
 

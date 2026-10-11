@@ -14,7 +14,10 @@ import {
   FUND_MAX_CENTS,
   FUND_VETO_WINDOW_MS,
   MIN_REASON_CHARS,
+  type NoticePolicy,
   OWNER_HOME,
+  SEALED_DEFAULT,
+  SILENT_BELOW_CENTS,
   type PolicyLimits,
   QUIET_HOURS,
   VELOCITY_LIMIT,
@@ -46,6 +49,8 @@ export interface GateConfig {
   quietHours: QuietHoursConfig;
   worldCategories: string[];
   mockTaxRate: number;
+  /** [notify]: the silent tier ceiling and sealed approval DMs. */
+  notice: NoticePolicy;
 }
 
 const DAY = DEFAULT_BUDGETS.find((b) => b.key === "global/day")!.capCents;
@@ -79,13 +84,16 @@ const NUMS: Record<string, NumSpec> = {
   // Approval links: shorter is stricter; 24h is the ceiling with or without the flag (the relay caps at 25h).
   "windows.approval_ttl_hours": { def: APPROVAL_TTL_MS / 3600_000, limit: APPROVAL_TTL_MS / 3600_000, abs: APPROVAL_TTL_MS / 3600_000, dir: "max" },
   "min_reason_chars": { def: MIN_REASON_CHARS, limit: MIN_REASON_CHARS, abs: 0, dir: "min" },
+  // Raising the silent ceiling means more purchases with no human signal: looser, so capped.
+  "notify.silent_below_cents": { def: SILENT_BELOW_CENTS, limit: SILENT_BELOW_CENTS, abs: ABSOLUTE_MAX_CENTS, dir: "max" },
 };
 
 const SCHEMA: Record<string, readonly string[]> = {
   "": [
     "timezone", "vendors", "owner_home_label", "min_reason_chars", "i_understand_the_risk", "world_categories",
-    "tiers", "caps", "joy", "quiet_hours", "velocity", "windows", "mock",
+    "tiers", "caps", "joy", "quiet_hours", "velocity", "windows", "mock", "notify",
   ],
+  notify: ["silent_below_cents", "sealed"],
   tiers: ["auto_max_cents", "ask_max_cents", "fund_enabled", "fund_max_cents"],
   caps: ["day_cents", "month_cents", "vendor_month_cents"],
   joy: ["enabled", "week_cents"],
@@ -248,6 +256,15 @@ export function validateConfig(raw: unknown, source = "config"): { config: GateC
   else if (typeof qe !== "string" || parseHm(qe) === undefined) problems.push(`quiet_hours.end ${JSON.stringify(qe)} must be "HH:MM"`);
   else quietHours = quietHoursConfig(qs, qe, timezone);
 
+  // notify: silent tier + sealed approval DMs
+  // The default follows a lowered auto tier down; an explicit value above it is an error.
+  const silentSet = get("notify.silent_below_cents") !== undefined;
+  const silentBelow = silentSet ? num("notify.silent_below_cents") : Math.min(SILENT_BELOW_CENTS, autoMax);
+  if (silentSet && silentBelow > autoMax) {
+    problems.push(`notify.silent_below_cents (${silentBelow}) must be <= tiers.auto_max_cents (${autoMax}): silent is a slice of the auto tier`);
+  }
+  const sealed = bool("notify.sealed", SEALED_DEFAULT);
+
   // mock
   const tax = get("mock.tax_rate") ?? MOCK_TAX_RATE;
   let mockTaxRate = MOCK_TAX_RATE;
@@ -279,6 +296,7 @@ export function validateConfig(raw: unknown, source = "config"): { config: GateC
       quietHours,
       worldCategories,
       mockTaxRate,
+      notice: { silentBelowCents: silentBelow, sealed },
     },
   };
 }

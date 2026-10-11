@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS requests (
   dm_attempts          INTEGER NOT NULL DEFAULT 0,
   dm_last_error        TEXT,
   why_note             TEXT,
+  hint                 TEXT,
+  -- set at decide: silent = no pre-order DM (decided → approved); sealed = DMs never name the item
+  silent               INTEGER CHECK (silent IS NULL OR silent IN (0,1)),
+  sealed               INTEGER CHECK (sealed IS NULL OR sealed IN (0,1)),
   rating               INTEGER,
   created_at           TEXT NOT NULL,
   updated_at           TEXT NOT NULL

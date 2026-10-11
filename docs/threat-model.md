@@ -32,12 +32,13 @@ A web page, issue or email tells the agent to buy something, or many things.
 - **Velocity**: more than N requests in 10 minutes trips STOP for everything.
 - **REACH**: anything reaching other people (shipping elsewhere, mail, gifts) always asks.
   The adapter sets the floor; the agent cannot declare its way below it.
-- Every auto purchase is DMed with a veto link *before* a cancel window, and nothing is
-  placed until the DM is delivered.
+- Every auto purchase from the silent ceiling ($40 by default) up is DMed with a veto link
+  *before* a cancel window, and none of those is placed until the DM is delivered.
+  Purchases below it are **silent** (scenario 9).
 - Idempotency: reusing a key with a different payload trips STOP.
 
-Worst case: auto-tier spend up to the caps, each with a veto DM. Set the caps to an
-amount you would shrug off losing.
+Worst case: auto-tier spend up to the caps; the part under the silent ceiling with no
+pre-order DM at all. Set the caps to an amount you would shrug off losing.
 
 ### 2. Leaked agent token
 
@@ -121,8 +122,11 @@ The gate host's `.env` leaks, or the vendor is breached.
 
 ### 6. Notifier compromise or outage
 
-- Down: nothing is placed (no message id, no purchase); STOP at 24h; optional health
-  alert at 2h.
+- Down: nothing non-silent is placed (no message id, no purchase); STOP at 24h; optional
+  health alert at 2h. Silent purchases do not need the DM path, so they continue; their
+  delivery why-notes queue and the rows stay `delivered` until the path is back. If the
+  only traffic is silent, a dead notifier raises no DM-down alarm at all, and the first
+  human signal is a cap denial, the nightly reconcile, or the missing why-notes.
 - Compromised: it sees approval links and could tap them itself (scenario 4 applies),
   or swallow DMs while returning fake message ids, so auto-tier buys proceed without the
   owner seeing them. Caps still bound the damage, and the reconcile still runs. Use an
@@ -143,12 +147,48 @@ services as the same user.
 ### 8. Bugs in the gate
 
 - The state machine only reaches `placing` through `approved`, which is only reachable
-  after a delivered DM. Every transition writes an event row.
+  after a delivered DM, except for a row the ledger has stored as silent
+  (`decided → approved` refuses anything else, and `approved → placing` needs a DM
+  message id unless the stored row is silent). Every transition writes an event row.
 - A re-decide runs right before placing; if policy now says deny (caps filled, STOP set),
   the request is denied.
 - STOP blocks every transition except into denied, cancelled or expired.
 - `DRY_RUN=1` is the default everywhere; `guarded()` keeps `place()` away from real
   vendors unless `DRY_RUN=0`.
+
+### 9. Silent purchases (no human signal before the money moves)
+
+By design, auto-tier purchases below `notify.silent_below_cents` ($40 by default, reach
+`self` or `world` only) are placed with no pre-order DM and no veto link. The owner
+hears about them only when the delivery why-note arrives.
+
+- **Risk:** a confused or compromised agent can buy many small things with nobody
+  watching. Up to the caps, every one of them can be silent: with the defaults that is
+  $100/day and $250/month (and $100/month per vendor) of sub-$40 purchases before
+  anything stops it.
+- **Mitigations:**
+  - The tier itself: silent ends at $40 and can't be raised past it without
+    `i_understand_the_risk`, nor past the auto tier at all. Reach `others` is never silent.
+  - Caps are unchanged and absolute; in-flight silent purchases count against them.
+  - Velocity: more than 5 requests in 10 minutes trips STOP, so a burst of silent buys
+    halts after a handful.
+  - The ledger records every one; the nightly reconcile compares vendor charges with it
+    and trips STOP on anything unexplained.
+  - The delivery why-note: every silent purchase must DM the owner before it can close,
+    so silent spend always becomes visible, just after the fact.
+  - A silent row is bound to the quote it was judged on; a changed re-quote or a
+    re-decide that is no longer silent denies it instead of placing.
+- If that trade is wrong for you, set `[notify] silent_below_cents = 0`.
+
+### 10. Sealed approvals
+
+Ask and fund DMs (reach `self`/`world`) and the relay page show the amount, cap
+headroom, vendor category and an agent-written hint, not the item. The owner approves
+partly on trust; the amount, the caps and the binding to that quote are what limit it.
+The hint is agent text: intake rejects one that contains any 4+ letter word of an item
+title, and it is cleaned like all agent text (no links). A hostile hint can still be
+misleading ("the filter you asked for"); the why-note on delivery is the check. Purchases
+that reach other people are never sealed.
 
 ## Out of scope
 

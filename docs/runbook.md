@@ -129,7 +129,7 @@ The text never contains amounts, items or links.
 
 | Alert | Fires when | What to do |
 |---|---|---|
-| DM path down >2h | every DM has failed for 2h. Orders are already held, because nothing moves without a delivered DM | check the notifier endpoint and `NOTIFY_DM_TOKEN`. At 24h down the gate trips STOP itself |
+| DM path down >2h | every DM has failed for 2h. Non-silent orders are already held, because they never move without a delivered DM. Silent ones (under `silent_below_cents`) still place, within the caps; their why-notes queue |  check the notifier endpoint and `NOTIFY_DM_TOKEN`. At 24h down the gate trips STOP itself |
 | STOP tripped | STOP was set, automatically or by hand | read the reason in the log, fix the cause, then `bin/buy unstop` |
 
 The command runs inside the unit's sandbox (`ProtectSystem=strict`). If it needs to write

@@ -1,11 +1,15 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   type Charge,
+  DEFAULT_NOTICE,
   IdempotencyConflict,
+  IllegalTransition,
+  type NoticePolicy,
   type Order,
   type PurchaseRequest,
   type Quote,
   type Reach,
+  StopActive,
   type VendorAdapter,
 } from "./types.ts";
 import {
@@ -68,7 +72,16 @@ export class FakeAdapter implements VendorAdapter {
   }
 }
 
-export function harness(start = NOON, wp1?: { policy: PolicyPort; state: StatePort }) {
+/**
+ * Most tests here exercise the DM / veto path with the $23 fixture price, which the default
+ * [notify] would make silent, so the harness turns the silent tier off unless `notice` says
+ * otherwise. The silent-tier and sealed tests pass DEFAULT_NOTICE explicitly.
+ */
+export function harness(
+  start = NOON,
+  wp1?: { policy: PolicyPort; state: StatePort },
+  notice: Partial<NoticePolicy> = { silentBelowCents: 0 },
+) {
   let t = start;
   const clock = { now: () => new Date(t) };
   const ledger = new MemoryLedger(clock);
@@ -80,7 +93,7 @@ export function harness(start = NOON, wp1?: { policy: PolicyPort; state: StatePo
   const orch = new Orchestrator({
     ledger, policy: wp1?.policy ?? contractPolicy, state: wp1?.state ?? contractStateGuard, adapters: { fakeshop: adapter },
     notifier, relay, clock, alerter, log: (e, d) => logs.push(JSON.stringify({ e, d })),
-    relayPublicUrl: RELAY, quietHours: { start: 22 * 60, end: 7 * 60 + 30, tz: "America/New_York" },
+    relayPublicUrl: RELAY, quietHours: { start: 22 * 60, end: 7 * 60 + 30, tz: "America/New_York" }, notice,
   });
   /** Owner taps approve: the relay forwards the approve link's token as proof-of-tap. */
   const approve = async (approvalId: string) => {
@@ -516,4 +529,175 @@ Deno.test("control characters in agent text are rejected at intake", async () =>
   const h = harness();
   await assertRejects(() => h.orch.submit(req({ reason: "ok\u0007bell" })));
   await assertRejects(() => h.orch.submit(req({ items: [{ sku: "a", qty: 1, url: "http://169.254.169.254/" }] })));
+});
+
+// ── Silent tier, sealed approvals, the reveal ([notify] defaults) ───────────
+const ITEM = { sku: "B0SCOPE60", qty: 1, title: "Brass Telescope", url: "https://shop.example/brass-telescope-60" };
+/** No title word, URL or SKU of ITEM, anywhere in `s` (links masked: random ids could collide). */
+function revealsNothing(s: string): boolean {
+  const t = s.replace(/<https:\/\/approve\.example\.test\/a\/[^>]+>/g, "<link>").toLowerCase();
+  return !["brass", "telescope", "shop.example", "b0scope60"].some((w) => t.includes(w));
+}
+const silentHarness = () => harness(NOON, undefined, DEFAULT_NOTICE);
+
+Deno.test("silent: $39.99 self → placed with zero DMs; delivered → why-note DM → closed", async () => {
+  const h = silentHarness();
+  h.adapter.price = 3999;
+  const row = await h.orch.submit(req({ items: [ITEM], whyNote: "you keep squinting at Saturn from the roof" }));
+  assertEquals([row.state, row.silent, row.tier, row.decision], ["approved", true, "auto", "auto"]);
+  assertEquals(h.notifier.messages.length, 0);
+  assertEquals(h.relay.published.length, 0, "no approval record, no relay page");
+  // it counts in the windows straight away
+  assertEquals(h.ledger.windowsFor("fakeshop", "general", h.clock.now())["global/day"].spentCents, 3999);
+  await h.orch.tick();
+  const placed = h.ledger.getRequest(row.id)!;
+  assertEquals([placed.state, placed.finalCents], ["placed", 3999]);
+  assertEquals(h.adapter.placed[0].hardCap, 3999);
+  assertEquals(h.notifier.messages.length, 0, "still nothing before delivery");
+  h.adapter.statusState = "delivered";
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.state, "closed");
+  assertEquals(h.notifier.messages.length, 1);
+  const reveal = h.notifier.messages[0];
+  assert(reveal.includes("Brass Telescope") && reveal.includes("squinting at Saturn"), reveal);
+  assert(reveal.includes("link: <https://shop.example/brass-telescope-60>"), reveal);
+});
+
+Deno.test("silent: $40.00 is not silent → a pre-order veto DM (auto tier stays open)", async () => {
+  const h = silentHarness();
+  h.adapter.price = 4000;
+  const row = await h.orch.submit(req({ items: [ITEM] }));
+  assertEquals([row.state, row.silent ?? false], ["dm_delivered", false]);
+  assertEquals(h.notifier.messages.length, 1);
+  assert(h.notifier.messages[0].includes("unless you veto"));
+  assertEquals(tokensFrom(h.notifier.messages[0]).length, 1);
+});
+
+Deno.test("silent: $5 reach others → ask, with full item, recipient and reason (never sealed)", async () => {
+  const h = silentHarness();
+  h.adapter.price = 500;
+  const row = await h.orch.submit(req({
+    items: [ITEM], hint: "for stargazing",
+    shipTo: { name: "Jane Doe", line1: "1 Main St", city: "Springfield", state: "IL", zip: "62701" },
+  }));
+  assertEquals([row.state, row.decision, row.reachEffective, row.silent, row.sealed], ["pending_approval", "ask", "others", false, false]);
+  const dm = h.notifier.messages[0];
+  assert(dm.includes("Brass Telescope") && dm.includes("ship to: Jane Doe, Springfield IL") && dm.includes("why: needed for the build"), dm);
+  assert(h.relay.published[0].summary.includes("Brass Telescope"));
+  assertEquals(h.relay.published[0].vendor, "fakeshop");
+});
+
+Deno.test("sealed: the ask DM and relay summary never contain the title, URL or SKU", async () => {
+  const h = silentHarness();
+  h.adapter.price = 8000;
+  const row = await h.orch.submit(req({ items: [ITEM], hint: "for looking up at night" }));
+  assertEquals([row.state, row.sealed], ["pending_approval", true]);
+  const dm = h.notifier.messages[0];
+  assert(revealsNothing(dm), dm);
+  assert(!dm.includes("needed for the build"), "the reason names the item too, so it stays out");
+  assert(dm.includes("$80.00") && dm.includes("hint: for looking up at night"), dm);
+  assert(dm.includes("if approved: $20.00 left today, $170.00 this month"), dm);
+  assertEquals(tokensFrom(dm).length, 2, "approve + deny links");
+  const rec = h.relay.published[0];
+  assert(revealsNothing(rec.summary), rec.summary);
+  assertEquals(rec.vendor, "sealed");
+  // approved, placed, delivered → the reveal
+  await h.approve(rec.approvalId);
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.state, "placed");
+  h.adapter.statusState = "delivered";
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.state, "closed");
+  assert(h.notifier.messages.at(-1)!.includes("Brass Telescope"));
+});
+
+Deno.test("sealed: no hint → \"something for you\"; [notify] sealed = false shows the item", async () => {
+  const h = silentHarness();
+  h.adapter.price = 8000;
+  await h.orch.submit(req({ items: [ITEM] }));
+  assert(h.notifier.messages[0].includes("hint: something for you"));
+  const open = harness(NOON, undefined, { ...DEFAULT_NOTICE, sealed: false });
+  open.adapter.price = 8000;
+  const row = await open.orch.submit(req({ items: [ITEM] }));
+  assertEquals(row.sealed, false);
+  assert(open.notifier.messages[0].includes("Brass Telescope"));
+});
+
+Deno.test("sealed: a fund_auto veto DM never names the item", async () => {
+  const h = silentHarness();
+  h.adapter.price = 60_000;
+  h.ledger.addFundEntry({ kind: "topup", cents: 100_000 }, h.clock.now());
+  const row = await h.orch.submit(req({ items: [ITEM], maxTotalCents: 70_000, hint: "a big shiny thing" }));
+  assertEquals([row.state, row.tier, row.sealed], ["dm_delivered", "fund_auto", true]);
+  const dm = h.notifier.messages[0];
+  assert(revealsNothing(dm) && revealsNothing(h.relay.published[0].summary), dm);
+  assert(dm.includes("robot fund pays $600.00") && dm.includes("fund after: $400.00") && dm.includes("left today"), dm);
+});
+
+Deno.test("joy $25 is silent: no veto DM, placed, then the reveal", async () => {
+  const h = silentHarness();
+  h.adapter.price = 2500;
+  const row = await h.orch.submit(req({ budget: "joy", items: [ITEM], whyNote: "you mentioned Saturn twice this week" }));
+  assertEquals([row.state, row.silent], ["approved", true]);
+  assertEquals(h.notifier.messages.length, 0);
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.state, "placed");
+  h.adapter.statusState = "delivered";
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.state, "closed");
+  assert(h.notifier.messages[0].startsWith("your robot's surprise arrived: 1× Brass Telescope"));
+});
+
+Deno.test("joy $55 keeps the sealed veto DM (joy/week raised so it fits)", async () => {
+  const h = silentHarness();
+  h.ledger.budgets["joy/week"] = 10_000;
+  h.adapter.price = 5500;
+  const row = await h.orch.submit(req({ budget: "joy", items: [ITEM], hint: "for clear nights" }));
+  assertEquals([row.state, row.silent, row.sealed], ["dm_delivered", false, true]);
+  const dm = h.notifier.messages[0];
+  assert(revealsNothing(dm) && dm.includes("$55.00") && dm.includes("hint: for clear nights"), dm);
+  assertEquals(tokensFrom(dm).length, 1, "deny-only veto link");
+  assert(revealsNothing(h.relay.published[0].summary));
+});
+
+Deno.test("delivered → closed is blocked until the why-note DM is delivered; other rows still move", async () => {
+  const h = silentHarness();
+  h.adapter.price = 1000;
+  const row = await h.orch.submit(req({ items: [ITEM] }));
+  await h.orch.tick();
+  h.adapter.statusState = "delivered";
+  h.notifier.fail = true; // DM path down
+  await h.orch.tick();
+  let cur = h.ledger.getRequest(row.id)!;
+  assertEquals([cur.state, cur.dmLastError], ["delivered", "fake_down"]);
+  // the closed transition itself refuses without a delivered why-note
+  assertThrows(() => contractStateGuard.assertTransition("delivered", "closed", { stopped: false, silent: true }), IllegalTransition);
+  // another silent purchase still goes through while the reveal waits
+  h.adapter.statusState = "open";
+  const other = await h.orch.submit(req({ items: [{ sku: "X", qty: 1, title: "Other" }] }));
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(other.id)!.state, "placed");
+  assertEquals(h.ledger.getRequest(row.id)!.state, "delivered");
+  h.notifier.fail = false;
+  h.adapter.statusState = "delivered";
+  await h.orch.tick();
+  cur = h.ledger.getRequest(row.id)!;
+  assertEquals(cur.state, "closed");
+  assertEquals(h.notifier.messages.length, 2, "one reveal per purchase");
+});
+
+Deno.test("silent rows keep caps, velocity and STOP; a changed re-quote is denied", async () => {
+  const h = silentHarness();
+  h.adapter.price = 3900;
+  const a = await h.orch.submit(req());
+  const b = await h.orch.submit(req());
+  const c = await h.orch.submit(req()); // 3 × $39 > $100/day
+  assertEquals([a.state, b.state, c.state], ["approved", "approved", "denied"]);
+  assert(c.reasons!.includes("window:global/day"));
+  h.adapter.price = 3950; // the vendor's price moved after the decision
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(a.id)!.reasons!.includes("quote_changed"), true);
+  assertEquals(h.adapter.placed.length, 0);
+  await h.orch.stop("test");
+  await assertRejects(() => h.orch.submit(req()), StopActive);
 });

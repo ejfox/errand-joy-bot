@@ -21,6 +21,8 @@ const TIMEOUT_MS = 15_000;
 const AUTO_MAX_CENTS = 6_900;
 const ASK_MAX_CENTS = 50_000;
 const FUND_MAX_CENTS = 100_000;
+const SILENT_BELOW_CENTS = 4_000; // [notify] silent_below_cents default
+const HINT_MAX_CHARS = 80;
 
 const STATES = [
   "received", "quoted", "decided", "dm_pending", "dm_delivered", "pending_approval",
@@ -104,6 +106,11 @@ export function explainReason(code: string): string {
     reach_others: "it reaches other people, so the owner must approve it",
     policy_changed: "policy changed between approval and placing (a cap filled up or STOP was set)",
     vendor_cancelled: "the vendor cancelled the order",
+    vendor_failed: "the vendor could not fulfil the order",
+    silent: "silent tier: no pre-order DM; the owner learns about it from your why-note on delivery",
+    quote_changed: "the vendor's price changed after the decision, so it was not placed",
+    now_needs_dm: "it no longer qualifies for the silent tier; submit it again if still needed",
+    now_needs_ask: "it now needs the owner's approval; submit it again if still needed",
   };
   return map[code] ?? code;
 }
@@ -180,7 +187,12 @@ function present(row: Row) {
     // Sealed envelope: what was picked for the owner's joy budget stays out of chat.
     return { ...base, sealed: "joy purchase: items and note are hidden on purpose. Do not reveal or guess them." };
   }
-  return { ...base, items: row.items, reason: row.reason, requester: row.requester, taskId: row.taskId };
+  const notice = row.silent
+    ? { silent: "no pre-order DM; the owner sees your whyNote when it is delivered" }
+    : row.sealed
+    ? { sealed: "the owner's DM shows only the amount and your hint; don't reveal the item in chat unless the owner asked for it" }
+    : {};
+  return { ...base, ...notice, items: row.items, reason: row.reason, requester: row.requester, taskId: row.taskId };
 }
 
 function ok(data: unknown, headline: string) {
@@ -211,7 +223,13 @@ const itemSchema = z.object({
 const requestShape = {
   vendor: z.string().min(1).max(64).describe("Vendor id from the gate's allowlist (e.g. 'mock' in a test gate)"),
   items: z.array(itemSchema).min(1).max(50),
-  reason: z.string().min(1).max(1000).describe("Why you want this, honestly and specifically. Shown to the owner. For joy: the why-note delivered with the item."),
+  reason: z.string().min(1).max(1000).describe("Why you want this, honestly and specifically. Shown to the owner when the DM is not sealed; the why-note fallback."),
+  whyNote: z.string().min(1).max(500).optional().describe(
+    "The note the owner reads ON DELIVERY for silent, sealed and joy purchases: what it is and why you picked it, specific and warm. Falls back to `reason`.",
+  ),
+  hint: z.string().min(1).max(HINT_MAX_CHARS).optional().describe(
+    `A teaser (max ${HINT_MAX_CHARS} chars) shown INSTEAD of the item in sealed DMs, e.g. "for clear nights". Must not contain any 4+ letter word from an item title (the gate returns 400). Default "something for you".`,
+  ),
   reach: z.enum(["self", "world", "others"]).describe("Who this affects. Pick truthfully; 'others' always asks."),
   maxTotalCents: z.number().int().positive().describe("Your ceiling in cents including tax and shipping. The gate refuses to place above it."),
   budget: z.enum(["general", "joy"]).optional().describe("Default 'general'. 'joy' only for the weekly quiet-joy routine."),
@@ -237,18 +255,22 @@ server.registerTool(
       "never call vendor APIs or checkout pages directly, and never try to approve your own request.",
       "",
       "Tiers are set by the vendor's QUOTED total (tax + shipping), not your estimate:",
-      `  under ${dollars(AUTO_MAX_CENTS)}: automatic. The owner is notified first and has a short window to cancel.`,
+      `  under ${dollars(SILENT_BELOW_CENTS)} (reach self/world): SILENT. Placed with no DM; the owner reads your whyNote on delivery.`,
+      `  ${dollars(SILENT_BELOW_CENTS)} to ${dollars(AUTO_MAX_CENTS)}: automatic. The owner is notified first and has a short window to cancel.`,
       `  ${dollars(AUTO_MAX_CENTS)} to ${dollars(ASK_MAX_CENTS)}: the owner must tap Approve on a private link.`,
       `  ${dollars(ASK_MAX_CENTS + 1)} to ${dollars(FUND_MAX_CENTS)}: automatic only if the robot fund covers it (with a longer veto window).`,
       `  over ${dollars(FUND_MAX_CENTS)}: always refused.`,
       "Daily, monthly and per-vendor caps apply; a request that would exceed one is denied.",
+      "Ask and fund DMs for reach self/world are SEALED: the owner sees the amount, caps and your `hint`, not the item,",
+      "until the why-note arrives on delivery. So write a teasing `hint` that doesn't name the item, a real `whyNote`,",
+      "and never reveal a sealed or silent pick in chat. Reach 'others' is never silent or sealed.",
       "",
       "reach, declared honestly: 'self' = only affects the owner; 'world' = affects the public or shared spaces;",
       "'others' = reaches another person (a gift, something in a housemate's space). 'others' ALWAYS needs the owner's approval.",
       "The vendor can raise reach but you can never lower it.",
       "",
       "budget 'joy' = the owner's small weekly surprise budget. Joy must be reach 'self', must land in the automatic tier",
-      "(never asks), and is a sealed envelope: never name joy picks in chat. For joy, `reason` is the why-note the owner reads on delivery.",
+      "(never asks), and is a sealed envelope: never name joy picks in chat. For joy, `whyNote` (else `reason`) is the note the owner reads on delivery.",
       "",
       "Returns the gate's row: a denial is a normal result with plain-English reasons, not an error.",
       "Every request gets an idempotencyKey (auto-generated if missing); reuse the SAME key only to retry the SAME payload.",
@@ -269,6 +291,8 @@ server.registerTool(
         maxTotalCents: args.maxTotalCents,
         budget: args.budget ?? "general",
         ...(args.category ? { category: args.category } : {}),
+        ...(args.whyNote ? { whyNote: args.whyNote } : {}),
+        ...(args.hint ? { hint: args.hint } : {}),
         // shipTo is deliberately not exposed: omitted means "the owner's configured home address".
       };
       const row = (await gate("POST", "/api/requests", body)) as Row;
@@ -277,6 +301,8 @@ server.registerTool(
         ? `DENIED: ${(row.reasons ?? []).map(explainReason).join("; ") || "no reason given"}. Do not retry the same request; tell the user.`
         : row.decision === "ask"
         ? "Submitted. The owner must approve it from their private link; you cannot approve it. Check back with purchase_status."
+        : row.silent
+        ? "Submitted (silent tier). It is placed on the gate's next tick with no DM; the owner reads your whyNote on delivery. Don't reveal it in chat."
         : "Submitted. The owner is notified first and can cancel within the window; check back with purchase_status.";
       return ok(shown, headline);
     }),

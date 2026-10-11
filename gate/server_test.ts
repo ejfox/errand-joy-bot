@@ -9,7 +9,8 @@ const AGENT = "agent-token-0123456789abcdef0123456789";
 const ADMIN = "admin-token-0123456789abcdef0123456789";
 const NOON = Date.parse("2026-10-12T16:00:00Z");
 
-function setup(tokens: { agent?: string; admin?: string } = {}) {
+// The $23 fixture would be silent under the default [notify]; these tests exercise the DM path.
+function setup(tokens: { agent?: string; admin?: string } = {}, silentBelowCents = 0) {
   const clock = { now: () => new Date(NOON) };
   const ledger = new MemoryLedger(clock);
   const notifier = new FakeNotifier();
@@ -29,6 +30,7 @@ function setup(tokens: { agent?: string; admin?: string } = {}) {
     ledger, policy: contractPolicy, state: contractStateGuard, adapters: { fakeshop: adapter }, notifier,
     relay: new FakeRelayClient(), clock, alerter: new FakeHealthAlerter(clock.now),
     relayPublicUrl: "https://approve.example.test", quietHours: { start: 0, end: 0, tz: "UTC", off: true },
+    notice: { silentBelowCents },
   });
   const app = createApp({
     orch, ledger, agentToken: tokens.agent ?? AGENT, adminToken: tokens.admin ?? ADMIN, now: clock.now,
@@ -123,6 +125,30 @@ Deno.test("admin: tick, fund entries, stop/clear, reconcile unconfigured", async
   assertEquals((await call("POST", "/api/requests", AGENT, goodReq)).status, 503);
   assertEquals((await call("DELETE", "/internal/stop", ADMIN)).status, 200);
   assertEquals((await call("POST", "/api/requests", AGENT, goodReq)).status, 201);
+});
+
+Deno.test("a hint that leaks an item-title word is a 400; a teasing hint is accepted", async () => {
+  const { call, notifier } = setup({}, 4000);
+  const item = { sku: "B0TELESCOPE", qty: 1, title: "Brass Telescope, 60mm refractor" };
+  for (const [i, hint] of ["a TELESCOPE for the roof", "something brassy", "60mm refractor fun"].entries()) {
+    const res = await call("POST", "/api/requests", AGENT, { ...goodReq, idempotencyKey: `h-${i}`, items: [item], hint });
+    assertEquals(res.status, 400, hint);
+    assert((await res.json()).error.startsWith("hint must not reveal the item"), hint);
+  }
+  assertEquals((await call("POST", "/api/requests", AGENT, { ...goodReq, idempotencyKey: "h-long", items: [item], hint: "x".repeat(81) })).status, 400);
+  const ok = await call("POST", "/api/requests", AGENT, { ...goodReq, idempotencyKey: "h-ok", items: [item], hint: "for looking up at night" });
+  assertEquals(ok.status, 201);
+  const row = await ok.json();
+  // $23 at the default silent ceiling: approved with no DM at all.
+  assertEquals([row.state, row.silent, row.hint], ["approved", true, "for looking up at night"]);
+  assertEquals(notifier.messages.length, 0);
+});
+
+Deno.test("import-order is admin-only and needs a ledger that supports it", async () => {
+  const { call } = setup();
+  const body = { vendor: "zinc", vendorOrderId: "o-1", cents: 2100, note: "bought by hand" };
+  assertEquals((await call("POST", "/internal/import-order", AGENT, body)).status, 401);
+  assertEquals((await call("POST", "/internal/import-order", ADMIN, body)).status, 501); // MemoryLedger has none
 });
 
 Deno.test("oversized bodies are refused", async () => {

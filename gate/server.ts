@@ -167,6 +167,26 @@ export function createApp(deps: ServerDeps): Hono {
       : undefined;
     return c.json(await orch.resolveUnknown(id, outcome, order));
   });
+  // Record an order placed outside the gate (by hand, or one the gate lost) so it counts against
+  // the windows and reconcile matches its charge. For Zinc, cents = max_price + the order fee.
+  internal.post("/import-order", async (c) => {
+    if (!ledger.importOrder) return c.json({ error: "not_configured" }, 501);
+    const b = (await readJson(c)) as Record<string, unknown> | null;
+    const vendor = b?.vendor, vendorOrderId = b?.vendorOrderId, cents = b?.cents, note = b?.note;
+    if (typeof vendor !== "string" || !/^[a-z0-9_-]{1,40}$/.test(vendor)) throw new ValidationError("vendor invalid");
+    if (typeof vendorOrderId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(vendorOrderId)) {
+      throw new ValidationError("vendorOrderId invalid");
+    }
+    if (!Number.isSafeInteger(cents) || (cents as number) <= 0 || (cents as number) > 1_000_000) {
+      throw new ValidationError("cents must be a positive integer ≤ 1000000");
+    }
+    // deno-lint-ignore no-control-regex -- rejecting control characters is the point
+    if (typeof note !== "string" || note.trim().length === 0 || note.length > 200 || /[\u0000-\u001f\u007f]/.test(note)) {
+      throw new ValidationError("note required (1-200 chars)");
+    }
+    const out = await ledger.importOrder({ vendor, vendorOrderId, cents: cents as number, note });
+    return c.json(out.row, out.created ? 201 : 200);
+  });
   app.route("/internal", internal);
 
   return app;

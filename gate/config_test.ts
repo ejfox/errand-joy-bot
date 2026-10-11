@@ -55,6 +55,26 @@ Deno.test("defaults are the types.ts values ($69/$500/$1000, $100/day, $250/mont
   assertEquals(c.ownerHomeLabel, "owner-home");
 });
 
+Deno.test("[notify] defaults load: silent below $40, sealed on", () => {
+  assertEquals(DEFAULT_CONFIG.notice, { silentBelowCents: 4000, sealed: true });
+  assertEquals(loadConfig("examples/config.example.toml").config.notice, { silentBelowCents: 4000, sealed: true });
+  const { config } = validateConfig({ notify: { silent_below_cents: 0, sealed: false } });
+  assertEquals(config.notice, { silentBelowCents: 0, sealed: false });
+  // the default follows a lowered auto tier down (the example file's $20)
+  assertEquals(parseConfig(EXAMPLE_LIKE).config.notice.silentBelowCents, 2000);
+});
+
+Deno.test("[notify] raising the silent ceiling is looser; above the auto tier is an error", () => {
+  const p = problems(() => validateConfig({ notify: { silent_below_cents: 5000, sealed: "yes", loud: 1 } }));
+  assert(p.some((x) => x.includes("notify.silent_below_cents = 5000 exceeds the hard ceiling of 4000")), p.join("\n"));
+  assert(p.some((x) => x.includes("notify.sealed must be true or false")));
+  assert(p.some((x) => x.includes("unknown key notify.loud")));
+  const q = problems(() => validateConfig({ tiers: { auto_max_cents: 3000 }, caps: { day_cents: 10_000 }, notify: { silent_below_cents: 3500 } }));
+  assert(q.some((x) => x.includes("must be <= tiers.auto_max_cents (3000)")), q.join("\n"));
+  const risky = validateConfig({ i_understand_the_risk: true, notify: { silent_below_cents: 6000 } });
+  assertEquals(risky.config.notice.silentBelowCents, 6000);
+});
+
 Deno.test("a stricter, example-style file parses; fund off; ask ceiling notice", () => {
   const { config, notices } = parseConfig(EXAMPLE_LIKE);
   assertEquals(config.limits.autoMaxCents, 2000);

@@ -5,7 +5,7 @@ description: The weekly quiet-joy routine. Use when asked to "do the joy run", "
 
 # Quiet joy: the weekly surprise budget
 
-Once a week you get a small budget (default $40 per ISO week, each purchase under the auto line) to buy the owner something that quietly makes their week better. It's a surprise. The owner sees "robot spent $23 on something, tap to veto" and learns what it was, and why, only when it arrives.
+Once a week you get a small budget (default $40 per ISO week, each purchase under the auto line) to buy the owner something that quietly makes their week better. It's a surprise. Picks under $40 are **silent**: no DM at all until it arrives. A bigger pick (only possible if the owner raised the weekly joy cap) gets a sealed DM: "robot spent $55 on something (hint: for clear nights), tap to veto". Either way the owner learns what it was, and why, only when it arrives, from your `whyNote`.
 
 ## Where to look
 
@@ -34,11 +34,13 @@ For each pick, call `request_purchase` with:
 - `budget: "joy"` and `reach: "self"` (always both)
 - `items` with sku, qty, title, url
 - `maxTotalCents` covering tax and shipping, under the auto line
-- `reason`: **this is the why-note** the owner reads when it's delivered. One or two warm, specific sentences that connect the thing to something real from their week ("You've had 'fix the wobbly desk lamp' on your list since March; this clamp should do it."). No flattery, no product copy.
+- `whyNote`: **this is the reveal** the owner reads when it's delivered. One or two warm, specific sentences that say what it is and connect it to something real from their week ("You've had 'fix the wobbly desk lamp' on your list since March; this clamp should do it."). No flattery, no product copy.
+- `reason`: your honest justification (at least 60 chars). It's the fallback if `whyNote` is missing; write both.
+- `hint`: a short teaser (max 80 chars) for the sealed DM, e.g. "for the desk that wobbles" is too close if the title says "desk"; "for steadier evenings" is right. No word of 4+ letters from the item title, or the gate rejects it.
 - `requester: "quiet-joy"`, `taskId: "joy-<ISO week>"`, e.g. `joy-2026-W41`
 
 If a pick is denied, read the reason. Swap it for something smaller only if that's still a good pick; never bend the rules to fit.
 
 ## The sealed envelope
 
-After submitting, **do not reveal what you picked**: not in chat, not in a summary, not in a commit, file, note, log or message. Your whole report to the user is: how many requests you submitted, the total, and their states ("2 joy requests, $31.40 total, both in the veto window"). If the owner asks what it is, tell them it's a surprise and that they can veto from the DM. The tools hide joy items for the same reason.
+After submitting, **do not reveal what you picked**: not in chat, not in a summary, not in a commit, file, note, log or message. Your whole report to the user is: how many requests you submitted, the total, and their states ("2 joy requests, $31.40 total, both silent"). Don't repeat the hint or the whyNote either. If the owner asks what it is, tell them it's a surprise and that they can veto from the DM. The tools hide joy items for the same reason.

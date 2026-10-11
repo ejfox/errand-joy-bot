@@ -3,7 +3,7 @@
     {
       "name": "request_purchase",
       "title": "Ask the owner's purchase gate to buy something",
-      "description": "Submit a purchase REQUEST to the owner's capped, ledgered purchase gate. This is the ONLY way to spend money:\nnever call vendor APIs or checkout pages directly, and never try to approve your own request.\n\nTiers are set by the vendor's QUOTED total (tax + shipping), not your estimate:\n  under $69.00: automatic. The owner is notified first and has a short window to cancel.\n  $69.00 to $500.00: the owner must tap Approve on a private link.\n  $500.01 to $1000.00: automatic only if the robot fund covers it (with a longer veto window).\n  over $1000.00: always refused.\nDaily, monthly and per-vendor caps apply; a request that would exceed one is denied.\n\nreach, declared honestly: 'self' = only affects the owner; 'world' = affects the public or shared spaces;\n'others' = reaches another person (a gift, something in a housemate's space). 'others' ALWAYS needs the owner's approval.\nThe vendor can raise reach but you can never lower it.\n\nbudget 'joy' = the owner's small weekly surprise budget. Joy must be reach 'self', must land in the automatic tier\n(never asks), and is a sealed envelope: never name joy picks in chat. For joy, `reason` is the why-note the owner reads on delivery.\n\nReturns the gate's row: a denial is a normal result with plain-English reasons, not an error.\nEvery request gets an idempotencyKey (auto-generated if missing); reuse the SAME key only to retry the SAME payload.",
+      "description": "Submit a purchase REQUEST to the owner's capped, ledgered purchase gate. This is the ONLY way to spend money:\nnever call vendor APIs or checkout pages directly, and never try to approve your own request.\n\nTiers are set by the vendor's QUOTED total (tax + shipping), not your estimate:\n  under $40.00 (reach self/world): SILENT. Placed with no DM; the owner reads your whyNote on delivery.\n  $40.00 to $69.00: automatic. The owner is notified first and has a short window to cancel.\n  $69.00 to $500.00: the owner must tap Approve on a private link.\n  $500.01 to $1000.00: automatic only if the robot fund covers it (with a longer veto window).\n  over $1000.00: always refused.\nDaily, monthly and per-vendor caps apply; a request that would exceed one is denied.\nAsk and fund DMs for reach self/world are SEALED: the owner sees the amount, caps and your `hint`, not the item,\nuntil the why-note arrives on delivery. So write a teasing `hint` that doesn't name the item, a real `whyNote`,\nand never reveal a sealed or silent pick in chat. Reach 'others' is never silent or sealed.\n\nreach, declared honestly: 'self' = only affects the owner; 'world' = affects the public or shared spaces;\n'others' = reaches another person (a gift, something in a housemate's space). 'others' ALWAYS needs the owner's approval.\nThe vendor can raise reach but you can never lower it.\n\nbudget 'joy' = the owner's small weekly surprise budget. Joy must be reach 'self', must land in the automatic tier\n(never asks), and is a sealed envelope: never name joy picks in chat. For joy, `whyNote` (else `reason`) is the note the owner reads on delivery.\n\nReturns the gate's row: a denial is a normal result with plain-English reasons, not an error.\nEvery request gets an idempotencyKey (auto-generated if missing); reuse the SAME key only to retry the SAME payload.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -56,10 +56,22 @@
             }
           },
           "reason": {
-            "description": "Why you want this, honestly and specifically. Shown to the owner. For joy: the why-note delivered with the item.",
+            "description": "Why you want this, honestly and specifically. Shown to the owner when the DM is not sealed; the why-note fallback.",
             "type": "string",
             "minLength": 1,
             "maxLength": 1000
+          },
+          "whyNote": {
+            "description": "The note the owner reads ON DELIVERY for silent, sealed and joy purchases: what it is and why you picked it, specific and warm. Falls back to `reason`.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "hint": {
+            "description": "A teaser (max 80 chars) shown INSTEAD of the item in sealed DMs, e.g. \"for clear nights\". Must not contain any 4+ letter word from an item title (the gate returns 400). Default \"something for you\".",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
           },
           "reach": {
             "description": "Who this affects. Pick truthfully; 'others' always asks.",

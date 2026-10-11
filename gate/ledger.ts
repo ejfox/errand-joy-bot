@@ -97,6 +97,9 @@ function rowToRequest(r: Row): RequestRow {
     dmAttempts: Number(r.dm_attempts),
     dmLastError: str(r.dm_last_error),
     whyNote: str(r.why_note),
+    ...(r.hint === null || r.hint === undefined ? {} : { hint: String(r.hint) }),
+    ...(r.silent === null || r.silent === undefined ? {} : { silent: Number(r.silent) === 1 }),
+    ...(r.sealed === null || r.sealed === undefined ? {} : { sealed: Number(r.sealed) === 1 }),
     rating: num(r.rating),
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
@@ -167,8 +170,8 @@ export function createRequest(
     db.prepare(
       `INSERT INTO requests (id, idempotency_key, payload_hash, requester, task_id, vendor,
          budget, reach_declared, items_json, reason, max_total_cents, category, ship_to_json,
-         why_note, state, dm_attempts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', 0, ?, ?)`,
+         why_note, hint, state, dm_attempts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', 0, ?, ?)`,
     ).run(
       id,
       req.idempotencyKey,
@@ -184,6 +187,7 @@ export function createRequest(
       nn(req.category),
       req.shipTo === undefined ? null : JSON.stringify(req.shipTo),
       nn(req.whyNote),
+      nn(req.hint),
       at,
       at,
     );
@@ -191,6 +195,52 @@ export function createRequest(
       "INSERT INTO events (request_id, from_state, to_state, note, at) VALUES (?, NULL, 'received', ?, ?)",
     ).run(id, "intake", at);
     return getRequest(db, id)!;
+  });
+}
+
+export interface ImportOrder {
+  vendor: string;
+  vendorOrderId: string;
+  cents: number;
+  note: string;
+}
+
+/**
+ * Record an order the owner placed by hand (or one the gate lost track of) so windows count it and
+ * reconcile matches its charge. Inserted directly in `placed` (requester "manual-import", tier auto,
+ * reach self, budget general), one `NULL → placed` event. Idempotent on vendor + vendorOrderId:
+ * the same pair returns the existing row; the same pair with a different amount throws
+ * IdempotencyConflict. Admin-only; never routed through policy (the money already moved).
+ */
+export function importOrder(db: Db, o: ImportOrder, now: Date = new Date()): { row: RequestRow; created: boolean } {
+  return tx(db, () => {
+    const key = `import:${o.vendor}:${o.vendorOrderId}`;
+    const payload = canonical({ vendor: o.vendor, vendorOrderId: o.vendorOrderId, cents: o.cents });
+    const existing = getRequestByKey(db, key);
+    if (existing) {
+      if (existing.finalCents !== o.cents || existing.vendorOrderId !== o.vendorOrderId) {
+        throw new IdempotencyConflict(`order ${o.vendorOrderId} already imported with a different amount`);
+      }
+      return { row: existing, created: false };
+    }
+    const id = crypto.randomUUID();
+    const at = nowISO(now);
+    const items: Item[] = [{ sku: o.vendorOrderId, qty: 1, title: o.note }];
+    db.prepare(
+      `INSERT INTO requests (id, idempotency_key, payload_hash, requester, task_id, vendor, budget,
+         reach_declared, reach_effective, items_json, reason, max_total_cents,
+         quote_subtotal_cents, quote_tax_cents, quote_shipping_cents, quote_total_cents, quote_currency, quoted_at,
+         final_cents, tier, decision, reasons_json, state, approver, vendor_order_id, dm_attempts, created_at, updated_at)
+       VALUES (?, ?, ?, 'manual-import', 'import', ?, 'general', 'self', 'self', ?, ?, ?,
+         ?, 0, 0, ?, 'USD', ?, ?, 'auto', 'auto', ?, 'placed', 'owner', ?, 0, ?, ?)`,
+    ).run(
+      id, key, payload, o.vendor, JSON.stringify(items), o.note, o.cents,
+      o.cents, o.cents, at, o.cents, JSON.stringify(["manual_import"]), o.vendorOrderId, at, at,
+    );
+    db.prepare(
+      "INSERT INTO events (request_id, from_state, to_state, note, at) VALUES (?, NULL, 'placed', 'manual_import', ?)",
+    ).run(id, at);
+    return { row: getRequest(db, id)!, created: true };
   });
 }
 
@@ -241,6 +291,8 @@ export type RequestPatch = Partial<
     | "dmAttempts"
     | "dmLastError"
     | "whyNote"
+    | "silent"
+    | "sealed"
     | "rating"
   >
 >;
@@ -261,6 +313,8 @@ function patchColumns(p: RequestPatch): [string, SqlVal][] {
   set("dmAttempts", "dm_attempts", () => p.dmAttempts!);
   set("dmLastError", "dm_last_error", () => p.dmLastError!);
   set("whyNote", "why_note", () => p.whyNote!);
+  set("silent", "silent", () => (p.silent ? 1 : 0));
+  set("sealed", "sealed", () => (p.sealed ? 1 : 0));
   set("rating", "rating", () => p.rating!);
   if ("quote" in p) {
     const q = p.quote;

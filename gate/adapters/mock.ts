@@ -31,6 +31,7 @@ const ADVANCE: Record<OrderState, OrderState> = {
   shipped: "delivered",
   delivered: "delivered",
   cancelled: "cancelled",
+  failed: "failed",
 };
 
 interface MockOrder {

@@ -25,6 +25,16 @@ export function openDb(path: string): Db {
   for (const c of ["deny_lookup_id", "approve_lookup_id"]) {
     if (!cols.some((x) => x.name === c)) db.exec(`ALTER TABLE approvals ADD COLUMN ${c} TEXT`);
   }
+  // A ledger from before the silent tier / sealed DMs has no hint, silent, sealed columns.
+  const rcols = db.prepare("PRAGMA table_info(requests)").all() as Array<{ name: string }>;
+  const add: [string, string][] = [
+    ["hint", "TEXT"],
+    ["silent", "INTEGER CHECK (silent IS NULL OR silent IN (0,1))"],
+    ["sealed", "INTEGER CHECK (sealed IS NULL OR sealed IN (0,1))"],
+  ];
+  for (const [c, type] of add) {
+    if (!rcols.some((x) => x.name === c)) db.exec(`ALTER TABLE requests ADD COLUMN ${c} ${type}`);
+  }
   const seed = db.prepare(
     "INSERT OR IGNORE INTO budgets (key, window, cap_cents) VALUES (?, ?, ?)",
   );

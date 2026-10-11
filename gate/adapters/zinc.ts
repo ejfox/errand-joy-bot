@@ -236,8 +236,8 @@ export class ZincAdapter implements VendorAdapter {
   /**
    * Per item: GET /products/{sku}/offers → cheapest available New offer (within maxUnitCents),
    * price × qty, plus that offer's cheapest shipping option. Tax = round(subtotal × taxRate)
-   * (offers carry none). totalCents = subtotal + tax + shipping + Zinc's order fee, so the
-   * fee is in the total the tiers see; the parts do NOT sum to the total (the fee has no field).
+   * (offers carry none). totalCents = subtotal + tax + shipping + feeCents (Zinc's order fee), so
+   * the fee is in the total the tiers see and the parts sum to the total (the gate checks this).
    */
   async quote(req: PurchaseRequest): Promise<Quote> {
     if (!req.items.length) throw new ZincError("zinc_no_items");
@@ -270,6 +270,7 @@ export class ZincAdapter implements VendorAdapter {
       subtotalCents,
       taxCents,
       shippingCents,
+      feeCents: this.feeCents,
       totalCents: subtotalCents + taxCents + shippingCents + this.feeCents,
       currency: "USD",
       vendorRef: `zinc:${this.retailer}`,

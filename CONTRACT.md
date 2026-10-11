@@ -12,10 +12,14 @@ The prose companion to `gate/types.ts`; keep the two in sync. Code enforces ever
 Keys: `timezone`, `vendors[]`, `owner_home_label`, `min_reason_chars`, `world_categories[]`, `i_understand_the_risk`;
 `[tiers] auto_max_cents, ask_max_cents, fund_enabled, fund_max_cents`; `[caps] day_cents, month_cents, vendor_month_cents`;
 `[joy] enabled, week_cents`; `[quiet_hours] start, end`; `[velocity] max_requests_per_10m`;
-`[windows] auto_cancel_minutes, fund_veto_minutes, approval_ttl_hours`; `[mock] tax_rate`.
+`[windows] auto_cancel_minutes, fund_veto_minutes, approval_ttl_hours`; `[mock] tax_rate`;
+`[notify] silent_below_cents, sealed`.
 - Defaults = the `types.ts` constants: $69 auto / $500 ask / $1000 fund (on; inert at a $0 balance), $100/day,
   $250/month, $100/vendor/month, $40/week joy inside the month cap, velocity 5, 10 min cancel, 2h fund veto,
-  24h approval TTL, quiet 22:00–07:30, `min_reason_chars = 60`.
+  24h approval TTL, quiet 22:00–07:30, `min_reason_chars = 60`, silent below $40 (or `auto_max_cents` if lower),
+  `sealed = true`.
+- `notify.silent_below_cents` is a looser-when-higher amount (ceiling $40 without the risk flag) and must be
+  `<= tiers.auto_max_cents`; 0 turns the silent tier off.
 - The defaults are also the HARD CEILINGS: config can only make policy stricter. Loosening needs
   `i_understand_the_risk = true`, and even then amounts stop at $10,000, velocity at 20, approval TTL at 24h.
 - Unknown keys are errors. `day_cents < auto_max_cents` is an error. A cap below `ask_max_cents` logs an INFO
@@ -31,20 +35,38 @@ Keys: `timezone`, `vendors[]`, `owner_home_label`, `min_reason_chars`, `world_ca
    `joy/week` for joy; any window where `spent + total > cap` → deny `window:<key>`. Joy counts inside global.
 9. `effectiveReach === "others"` → at least ask (fund_auto too).
 
+## Silent and sealed (`noticeFor()` in orchestrator.ts; stored on the row at decide)
+- **silent** = decision `auto` AND tier `auto` AND effectiveReach `self`|`world` AND quoted total
+  `< notify.silent_below_cents` (joy included). No pre-order DM, no approval record, no cancel window:
+  `decided → approved`, then tick re-quotes (must equal the decided quote, else `quote_changed`), re-decides
+  (must still be silent, else `policy_changed, now_needs_dm`) and places with hard cap
+  `min(quote, maxTotalCents)`. Caps, velocity, STOP, REACH and the ledger apply unchanged.
+- **sealed** = not silent, effectiveReach `self`|`world`, and either budget joy, or `notify.sealed` with decision
+  `ask` or tier `fund_auto`. The DM and relay summary show the amount, today's / this month's headroom, the
+  vendor category (`VENDOR_LABELS` in notify.ts, e.g. "Amazon via Zinc"), and the agent's `hint` (default
+  "something for you"); never the title, URL, SKU, reason or requester. The published record's vendor is
+  `"sealed"`. Auto-tier non-joy veto DMs ($40 up to auto max) stay open.
+- effectiveReach `others` is never silent and never sealed: the DM and page always show item, recipient, reason.
+- THE REVEAL: every silent, sealed or joy purchase gets a why-note DM on delivery (what it is, `whyNote` falling
+  back to `reason`, and the first item URL if any), and stays `delivered` until that DM has a messageId.
+
 ## State machine (state.ts)
 ```
 received → quoted | failed (quote failed) | cancelled
 quoted → decided | denied (bad quote / over the agent's maxTotalCents) | cancelled
-decided → denied | dm_pending | cancelled
+decided → denied | dm_pending | approved (ONLY a silent row) | cancelled
 dm_pending → dm_delivered (needs messageId) | expired (24h of failed DMs) | denied | cancelled
 dm_delivered → pending_approval (ask) | approved (cancel / veto window elapsed) | cancelled (veto)
 pending_approval → approved | denied | expired | cancelled
-approved → placing (ONLY with a non-deny re-decide) | denied (policy_changed) | cancelled
+approved → placing (ONLY with a non-deny re-decide, and a DM messageId unless the row is silent)
+         | denied (policy_changed) | cancelled
 placing → placed | failed (guard refused before the vendor call) | outcome_unknown (vendor call errored)
 outcome_unknown → placed | failed      (reconcile or POST /internal/resolve/:id)
-placed → delivered | cancelled | refunded
-delivered → closed (joy: only after the why-note DM has a messageId)
+placed → delivered | cancelled (incl. vendor status "failed") | refunded
+delivered → closed (joy, silent or sealed: only after the why-note DM has a messageId)
 ```
+The fail-closed rule "nothing reaches `placing` without a delivered DM" applies to every NON-silent row.
+The ledger re-checks `silent` / `sealed` from the persisted row, never from the caller.
 Under STOP only transitions into `denied, cancelled, expired, failed, placed, outcome_unknown, refunded` are allowed:
 they halt money or record what a vendor already did. Every transition writes an `events` row, is a compare-and-set
 on the current state, and re-runs `assertTransition` inside the ledger transaction (wiring.ts `SqliteLedger`).
@@ -76,10 +98,18 @@ Binds `GATE_HOST:GATE_PORT` (default 127.0.0.1:47400). Refuses anything but loop
 - `/api/*` (Bearer `GATE_AGENT_TOKEN`): `POST /api/requests`, `GET /api/requests/:id`, `GET /api/requests?state=`,
   `POST /api/requests/:id/cancel`, `GET /api/budgets`, `GET /api/fund`.
 - `/internal/*` (Bearer `GATE_ADMIN_TOKEN`): `POST tick`, `POST reconcile`, `POST fund/entries`, `POST|DELETE stop`,
-  `POST rate/:id`, `POST resolve/:id` (`{outcome: "placed"|"failed", vendorOrderId?, chargedCents?}`).
+  `POST rate/:id`, `POST resolve/:id` (`{outcome: "placed"|"failed", vendorOrderId?, chargedCents?}`),
+  `POST import-order` (`{vendor, vendorOrderId, cents, note}`): inserts a row directly in `placed` (requester
+  `manual-import`, tier/decision auto, reach self, budget general, `final_cents = cents`, event `NULL → placed`),
+  counts in the windows, lets reconcile match the charge; idempotent on vendor + vendorOrderId (same pair with a
+  different amount → 409). For Zinc, `cents` = `max_price` + the order fee (100).
 - `GET /health` → `{ok, stopped}` only.
 - Request body: `PurchaseRequest` in types.ts. `reason` ≥ `min_reason_chars`. `shipTo` is `owner_home_label`
-  (default `"owner-home"`) or `{name, line1, city, state, zip}`. Optional `whyNote` (joy: shown only on delivery).
+  (default `"owner-home"`) or `{name, line1, city, state, zip, phone?}`. Optional `whyNote` (1-500 chars; the
+  delivery why-note for silent, sealed and joy purchases). Optional `hint` (1-80 chars; shown in sealed DMs instead
+  of the item): 400 if it contains, case-insensitively, any 4+ letter word of an item title (or a 4+ char SKU).
+- `Quote.feeCents` (optional): a per-order vendor fee; `subtotal + tax + shipping + fee` must equal `totalCents`.
+- `VendorAdapter.status()` may return `"failed"` (the vendor gave up); the gate treats it like `"cancelled"`.
 
 ## Approval tokens
 - Two SEPARATE tokens per record, 32 random bytes base64url each, stored as sha256 hex only:
@@ -90,14 +120,16 @@ Binds `GATE_HOST:GATE_PORT` (default 127.0.0.1:47400). Refuses anything but loop
   the fragment, which is never sent in a request.
 - Ask DM: `approve (24h): <RELAY_PUBLIC_URL/a/<approveLookupId>#<approveToken>>` and
   `deny: <…/a/<denyLookupId>#<denyToken>>`, plus cap headroom ("if approved: $X left today, $Y this month").
-  Veto DMs (auto, fund, joy) carry only the deny link. Joy DMs and relay summaries never name the item or vendor.
+  Veto DMs (auto, fund, joy) carry only the deny link. Joy and sealed DMs and relay summaries never name the item
+  (sealed ones show the vendor category; the published record's vendor is `"sealed"`). Sealed ask DMs show
+  headroom and the hint instead of items and reason. Silent purchases have no DM and no record.
 - The gate accepts an approve verdict only if `verdict.token` hashes to its stored `approveTokenHash`.
   A compromised relay can always deny. It receives an approve token only in the POST body of an Approve tap, so
   prefetchers, link previews and access logs never give it one; only a relay actively serving hostile page code
   when the owner opens an Approve link could read the fragment. Deny verdicts need no token (fail-safe direction).
 - Tick pulls verdicts BEFORE retrying DMs. A deny is honoured in every pre-placing state, including
   `dm_pending`. If the relay answers `already_decided` to a republish, the row is cancelled and no DM is sent.
-- Quiet hours queue DMs; nothing is placed before its DM is delivered.
+- Quiet hours queue DMs; nothing non-silent is placed before its DM is delivered. Delivery why-notes wait too.
 
 ## Relay (relay/, deployed on its own)
 - Public. Holds only `RELAY_TOKEN`; storage `RELAY_STORE=sqlite` (default) or `kv` (Deno KV, for Deno Deploy).

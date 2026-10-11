@@ -34,7 +34,7 @@ import {
 
 const PATCH_KEYS = [
   "reachEffective", "quote", "finalCents", "tier", "decision", "reasons", "approver", "vendorOrderId",
-  "dmMessageId", "dmAttempts", "dmLastError", "whyNote", "rating",
+  "dmMessageId", "dmAttempts", "dmLastError", "whyNote", "silent", "sealed", "rating",
 ] as const satisfies readonly (keyof L.RequestPatch)[];
 
 /** Keep only the columns the ledger lets callers change; state/id/hash/etc. are never patchable. */
@@ -97,10 +97,17 @@ export class SqliteLedger implements LedgerPort {
         budget: cur.budget,
         messageId: patch?.dmMessageId ?? cur.dmMessageId,
         ...ctx,
+        // The persisted flags win over the caller's: a silent/sealed row is judged as what it IS.
+        silent: patch?.silent ?? cur.silent,
+        sealed: patch?.sealed ?? cur.sealed,
         stopped: this.isStopped(), // always re-read; never trust a caller's snapshot
       });
       return L.transition(this.db, id, to, note ?? "", toPatch(patch), this.now(), from);
     });
+  }
+
+  importOrder(o: L.ImportOrder) {
+    return L.importOrder(this.db, o, this.now());
   }
 
   stateEnteredAt(id: string, state: State) {
@@ -282,6 +289,7 @@ export function buildDeps(config: GateConfig, opts: BuildOptions): GateDeps {
     timing: config.timing,
     minReasonChars: config.minReasonChars,
     ownerHomeLabel: config.ownerHomeLabel,
+    notice: config.notice,
   });
 
   const runReconcile = async (): Promise<RunRecord> => {

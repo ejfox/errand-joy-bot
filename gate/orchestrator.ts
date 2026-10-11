@@ -2,7 +2,10 @@
 // the bottom of this file); the ports below name exactly what this file needs.
 //
 // Fail-closed invariants:
-//  - nothing reaches `placing` without a delivered DM (dmMessageId) AND a stored approval record;
+//  - nothing NON-SILENT reaches `placing` without a delivered DM (dmMessageId) AND a stored approval
+//    record. Silent rows (auto tier, reach self/world, quoted total < notice.silentBelowCents) skip
+//    the DM by design; caps, velocity, STOP, REACH and the ledger still apply, and the delivery
+//    why-note DM is required before they close;
 //  - a fresh quote, a binding check and a fresh decide() run immediately before every placement;
 //  - plaintext approval tokens exist only inside sendDm(), and leave it only in the DM text;
 //  - decide() and the transition that makes a request's money count run under one lock, so
@@ -11,13 +14,16 @@ import {
   AUTO_CANCEL_WINDOW_MS,
   APPROVAL_TTL_MS,
   type ApprovalRecord,
+  DEFAULT_NOTICE,
   DM_DOWN_STOP_MS,
   FUND_VETO_WINDOW_MS,
   type FundKind,
+  HINT_MAX_CHARS,
   IdempotencyConflict,
   IllegalTransition,
   MIN_REASON_CHARS,
   type Notifier,
+  type NoticePolicy,
   OWNER_HOME,
   type PolicyInput,
   type PolicyResult,
@@ -34,7 +40,7 @@ import {
   type VendorAdapter,
   type WindowUsage,
 } from "./types.ts";
-import { assertTransition as stateAssert, TRANSITIONS } from "./state.ts";
+import { assertTransition as stateAssert, needsWhyNote, TRANSITIONS } from "./state.ts";
 import { decide as policyDecide } from "./policy.ts";
 import { GuardRefused } from "./adapters/registry.ts";
 import { RelayAlreadyDecided } from "./relay_client.ts";
@@ -46,6 +52,9 @@ import {
   fmtCents,
   fundVetoDm,
   type HealthAlerter,
+  type Headroom,
+  sealedHint,
+  vendorLabel,
   gateTimezone,
   inQuietHours as quietAt,
   quietHoursConfig,
@@ -105,6 +114,11 @@ export interface LedgerPort {
   consumeApproval(approvalId: string, verdict: "approve" | "deny", atISO: string): Awaitable<boolean>;
   getSetting(key: string): Awaitable<string | undefined>;
   setSetting(key: string, value: string | null): Awaitable<void>;
+  /**
+   * Admin: record an order placed outside the gate, directly in `placed` (counts in windows,
+   * reconcile matches it). Idempotent on vendor + vendorOrderId. Optional: the SQLite ledger has it.
+   */
+  importOrder?(o: { vendor: string; vendorOrderId: string; cents: number; note: string }): Awaitable<{ row: GateRow; created: boolean }>;
 }
 
 export interface PolicyPort {
@@ -121,6 +135,8 @@ export interface TransitionCtx {
   whyNoteDelivered?: boolean; // delivered → closed
   budget?: "general" | "joy";
   redecide?: PolicyResult; // approved → placing
+  silent?: boolean; // the row's persisted flag: decided → approved; placing without a DM
+  sealed?: boolean; // the row's persisted flag: delivered → closed needs the why-note
 }
 export interface Clock {
   now(): Date;
@@ -147,6 +163,8 @@ export interface OrchestratorDeps {
   minReasonChars?: number;
   /** The shipTo string agents use for the owner's address (config owner_home_label). Default OWNER_HOME. */
   ownerHomeLabel?: string;
+  /** From config.toml [notify]: silent tier ceiling and sealed DMs. Default types.ts DEFAULT_NOTICE. */
+  notice?: Partial<NoticePolicy>;
 }
 
 export interface Timing {
@@ -253,6 +271,15 @@ export function validateRequest(
       ...(i.maxUnitCents !== undefined ? { maxUnitCents: i.maxUnitCents as number } : {}),
     };
   });
+  let hint: string | undefined;
+  if (r.hint !== undefined) {
+    if (typeof r.hint !== "string" || r.hint.trim().length === 0 || r.hint.length > HINT_MAX_CHARS) {
+      throw new ValidationError(`hint invalid (1-${HINT_MAX_CHARS} chars)`);
+    }
+    const leaked = hintLeaks(r.hint, items);
+    if (leaked) throw new ValidationError(`hint must not reveal the item (it contains "${leaked}" from the item title)`);
+    hint = r.hint;
+  }
   let shipTo: ShipTo | undefined;
   if (r.shipTo !== undefined) {
     // The configured label (config owner_home_label) is normalised to the one internal literal.
@@ -264,14 +291,37 @@ export function validateRequest(
           throw new ValidationError(`shipTo.${k} invalid`);
         }
       }
-      shipTo = { name: s.name as string, line1: s.line1 as string, city: s.city as string, state: s.state as string, zip: s.zip as string };
+      if (s.phone !== undefined && (typeof s.phone !== "string" || !/^[0-9+().\- ]{4,40}$/.test(s.phone))) {
+        throw new ValidationError("shipTo.phone invalid");
+      }
+      shipTo = {
+        name: s.name as string, line1: s.line1 as string, city: s.city as string, state: s.state as string, zip: s.zip as string,
+        ...(s.phone !== undefined ? { phone: s.phone as string } : {}),
+      };
     } else throw new ValidationError("shipTo invalid");
   }
   return {
     idempotencyKey, requester, taskId, vendor, items, reason, reach, maxTotalCents: maxTotalCents as number,
     budget, ...(r.category !== undefined ? { category: r.category as string } : {}), ...(shipTo ? { shipTo } : {}),
     ...(r.whyNote !== undefined ? { whyNote: r.whyNote as string } : {}),
+    ...(hint !== undefined ? { hint } : {}),
   };
+}
+
+/**
+ * A sealed hint must not leak the item: returns the first item-title word of 4+ letters (or a SKU
+ * of 4+ chars) that appears anywhere in the hint, case-insensitive, else undefined.
+ */
+export function hintLeaks(hint: string, items: { sku: string; title?: string }[]): string | undefined {
+  const h = hint.toLowerCase();
+  for (const it of items) {
+    for (const w of (it.title ?? "").toLowerCase().split(/[^\p{L}]+/u)) {
+      if (w.length >= 4 && h.includes(w)) return w;
+    }
+    const sku = it.sku.toLowerCase();
+    if (sku.length >= 4 && h.includes(sku)) return it.sku;
+  }
+  return undefined;
 }
 
 function canonical(v: unknown): string {
@@ -302,6 +352,7 @@ export function rowToRequest(row: GateRow): PurchaseRequest {
     ...(row.category ? { category: row.category } : {}),
     ...(row.shipTo ? { shipTo: row.shipTo } : {}),
     ...(row.whyNote ? { whyNote: row.whyNote } : {}),
+    ...(row.hint ? { hint: row.hint } : {}),
   };
 }
 
@@ -310,7 +361,9 @@ function quoteProblem(q: Quote | undefined): string | undefined {
   const ints = [q.subtotalCents, q.taxCents, q.shippingCents, q.totalCents];
   if (!ints.every((n) => Number.isSafeInteger(n) && n >= 0)) return "bad_quote";
   if (q.currency !== "USD") return "bad_quote_currency";
-  if (q.subtotalCents + q.taxCents + q.shippingCents !== q.totalCents) return "bad_quote_sum";
+  const fee = q.feeCents ?? 0;
+  if (!Number.isSafeInteger(fee) || fee < 0) return "bad_quote";
+  if (q.subtotalCents + q.taxCents + q.shippingCents + fee !== q.totalCents) return "bad_quote_sum";
   return undefined;
 }
 
@@ -318,9 +371,36 @@ function maxReach(a: Reach, b: Reach): Reach {
   return REACH_RANK[a] >= REACH_RANK[b] ? a : b;
 }
 
-/** Text the relay page renders. The joy summary is a sealed envelope: no item, no vendor detail. */
+/**
+ * Silent / sealed, decided once from the policy result and stored on the row:
+ *  - silent: auto decision in the auto tier, reach self/world, quoted total < silentBelowCents
+ *    (joy included). No pre-order DM, no approval record.
+ *  - sealed: joy (always), or [notify] sealed with an ask / fund_auto decision at reach self/world.
+ *    The DM and relay summary show amount, headroom, vendor category and hint, never the item.
+ * Reach "others" is never silent and never sealed: the owner always sees item, recipient and reason.
+ */
+export function noticeFor(
+  result: Pick<PolicyResult, "decision" | "tier" | "effectiveReach">,
+  totalCents: number,
+  budget: "general" | "joy",
+  notice: NoticePolicy = DEFAULT_NOTICE,
+): { silent: boolean; sealed: boolean } {
+  if (result.decision === "deny" || result.effectiveReach === "others") return { silent: false, sealed: false };
+  const silent = result.decision === "auto" && result.tier === "auto" && totalCents < notice.silentBelowCents;
+  if (silent) return { silent: true, sealed: false };
+  const sealed = budget === "joy" || (notice.sealed && (result.decision === "ask" || result.tier === "fund_auto"));
+  return { silent: false, sealed };
+}
+
+/**
+ * Text the relay page renders. Joy and sealed summaries are a sealed envelope: amount, vendor
+ * category and the agent's hint only, never the item, URL, SKU or reason.
+ */
 export function approvalSummary(row: GateRow, totalCents: number): string {
-  if (row.budget === "joy") return `robot spent ${fmtCents(totalCents)} on something this week`;
+  if (row.budget === "joy") {
+    return `robot spent ${fmtCents(totalCents)} on something this week${row.hint ? ` (hint: ${sealedHint(row)})` : ""}`;
+  }
+  if (row.sealed) return `sealed · ${fmtCents(totalCents)} · ${vendorLabel(row.vendor)} · hint: ${sealedHint(row)}`;
   const items = row.items.map((i) => `${i.qty}× ${clean(i.title || i.sku, 60)}`).join(", ").slice(0, 300);
   return `${clean(row.requester, 40)} · ${fmtCents(totalCents)} · ${items} · ${clean(row.reason, 200)}`.slice(0, 600);
 }
@@ -330,10 +410,12 @@ export class Orchestrator {
   private readonly qh: QuietHoursConfig;
   private readonly t: Timing;
   private readonly minReason: number;
+  private readonly notice: NoticePolicy;
   constructor(private readonly d: OrchestratorDeps) {
     this.qh = d.quietHours ?? quietHoursConfig();
     this.t = { ...DEFAULT_TIMING, ...(d.timing ?? {}) };
     this.minReason = d.minReasonChars ?? MIN_REASON_CHARS;
+    this.notice = { ...DEFAULT_NOTICE, ...(d.notice ?? {}) };
   }
 
   // One async lock around every "read the windows → decide → make the money count" section
@@ -367,6 +449,8 @@ export class Orchestrator {
       stopped,
       budget: row.budget,
       messageId: patch?.dmMessageId ?? row.dmMessageId,
+      silent: patch?.silent ?? row.silent,
+      sealed: patch?.sealed ?? row.sealed,
       ...extra,
     };
     this.d.state.assertTransition(row.state, to, ctx);
@@ -446,11 +530,14 @@ export class Orchestrator {
       result = { ...result, effectiveReach: maxReach(result.effectiveReach, maxReach(req.reach, adapterReach)) };
       if (result.effectiveReach === "others" && result.decision === "auto") result = { ...result, decision: "ask" };
       const decision = result.tripStop ? "deny" : result.decision;
+      const { silent, sealed } = noticeFor({ ...result, decision }, quote.totalCents, budget, this.notice);
       let r = await this.move(row, "decided", {
         tier: result.tier,
         decision,
-        reasons: result.reasons,
+        reasons: silent ? [...result.reasons, "silent"] : result.reasons,
         reachEffective: result.effectiveReach,
+        silent,
+        sealed,
       });
       if (decision === "deny" || (await ledger.isStopped())) {
         tripStop = Boolean(result.tripStop);
@@ -459,7 +546,9 @@ export class Orchestrator {
       if (r.tier === "fund_auto") {
         await ledger.addFundEntry({ kind: "hold", cents: -quote.totalCents, requestId: r.id }, now);
       }
-      r = await this.move(r, "dm_pending");
+      // Silent tier: no DM, no cancel window. approved still counts in every window, and tick
+      // places it only after a fresh quote and a re-decide under this same lock.
+      r = silent ? await this.move(r, "approved", {}, "silent") : await this.move(r, "dm_pending");
       return r;
     });
     if (row.state === "denied") {
@@ -467,6 +556,7 @@ export class Orchestrator {
       if (tripStop) await this.stop("velocity");
       return row;
     }
+    if (row.silent) return row;
     try {
       await this.sendDm(row, now);
     } catch (err) {
@@ -513,13 +603,17 @@ export class Orchestrator {
       ttlMs: this.t.approvalTtlMs,
     });
     const record = minted.record;
-    // Ask DMs show the cap headroom left if the owner approves (caps are absolute).
-    let headroom: { dayCents: number; monthCents: number } | undefined;
-    if (asks && row.tier !== "fund_auto") {
+    // Ask DMs show the cap headroom left if the owner approves (caps are absolute). Sealed fund DMs
+    // show today's / this month's headroom too (fund purchases don't count against the caps).
+    let headroom: Headroom | undefined;
+    let fundAfterCents: number | undefined;
+    if ((asks && row.tier !== "fund_auto") || (row.sealed && row.tier === "fund_auto")) {
       const w = await ledger.windowsFor(row.vendor, row.budget, now, row.id);
-      const left = (k: string) => w[k] ? Math.max(0, w[k].capCents - w[k].spentCents - total) : 0;
+      const counted = row.tier === "fund_auto" ? 0 : total;
+      const left = (k: string) => w[k] ? Math.max(0, w[k].capCents - w[k].spentCents - counted) : 0;
       headroom = { dayCents: left("global/day"), monthCents: left("global/month") };
     }
+    if (row.sealed && row.tier === "fund_auto") fundAfterCents = Math.max(0, await ledger.fundBalance());
     let text: string;
     {
       let denyUrl: string, approveUrl = "";
@@ -535,19 +629,21 @@ export class Orchestrator {
       }
       minted.denyToken = "";
       minted.approveToken = undefined;
+      const sealed = row.sealed === true && row.reachEffective !== "others"; // belt and braces: others is never sealed
       text = asks
-        ? approvalDm(row, row.quote, approveUrl, denyUrl, { ttlHours: this.t.approvalTtlMs / 3600_000, headroom })
+        ? approvalDm(row, row.quote, approveUrl, denyUrl, { ttlHours: this.t.approvalTtlMs / 3600_000, headroom, sealed })
         : row.tier === "fund_auto"
-        ? fundVetoDm(row, row.quote, denyUrl, this.t.fundVetoWindowMs / 60_000)
+        ? fundVetoDm(row, row.quote, denyUrl, this.t.fundVetoWindowMs / 60_000, { sealed, headroom, fundAfterCents })
         : vetoDm(row, row.quote, denyUrl, { joy: row.budget === "joy", windowMin: this.t.autoCancelWindowMs / 60_000 });
     }
 
     // Publish first: a delivered DM must always point at a live record. If the DM then fails, the
     // published hash is orphaned and harmless (its token was never revealed).
     try {
-      // Joy: the public page must not reveal the vendor either. Binding is checked against the local
-      // record (real vendor), so masking the published copy changes nothing on the gate side.
-      await this.d.relay.publish(row.budget === "joy" ? { ...record, vendor: SEALED_VENDOR } : record);
+      // Joy / sealed: the public page must not reveal the vendor either (the summary carries the
+      // vendor category). Binding is checked against the local record (real vendor), so masking the
+      // published copy changes nothing on the gate side.
+      await this.d.relay.publish(row.budget === "joy" || row.sealed ? { ...record, vendor: SEALED_VENDOR } : record);
     } catch (err) {
       if (err instanceof RelayAlreadyDecided) {
         // The owner already tapped a link from an earlier DM we thought had failed. We can't know which
@@ -700,11 +796,13 @@ export class Orchestrator {
       const s = await adapter.status(r.vendorOrderId);
       if (s.state === "delivered") await this.move(r, "delivered");
       else if (s.state === "cancelled") await this.move(r, "cancelled", {}, "vendor_cancelled");
+      else if (s.state === "failed") await this.move(r, "cancelled", {}, "vendor_failed");
     });
 
-    // 8. close delivered (joy waits for the why-note DM)
+    // 8. close delivered. Joy, silent and sealed purchases wait for THE REVEAL (the why-note DM);
+    // a failed send leaves the row `delivered` for the next tick and blocks nothing else.
     await each(await ledger.listByState("delivered"), async (r) => {
-      if (r.budget !== "joy") {
+      if (!needsWhyNote(r)) {
         await this.move(r, "closed", {}, "closed", { whyNoteDelivered: true });
         rep.closed++;
         return;
@@ -804,14 +902,22 @@ export class Orchestrator {
     };
     const adapter = Object.hasOwn(this.d.adapters, row.vendor) ? this.d.adapters[row.vendor] : undefined;
     if (!adapter) return await deny(["vendor_gone"]);
-    // Fail closed: a delivered DM and a stored approval are prerequisites.
-    if (!row.dmMessageId) return await deny(["no_dm"]);
-    const a = await ledger.getApprovalForRequest(row.id);
-    if (!a || !row.quote) return await deny(["no_approval"]);
-    if (row.decision === "ask" && !(a.kind === "approve" && a.usedAt && a.verdict === "approve")) {
-      return await deny(["not_approved"]);
+    // Fail closed: a delivered DM and a stored approval are prerequisites, except for a silent row
+    // (auto decision, auto tier, reach self/world, by construction in submit()), which has neither.
+    const silent = row.silent === true && row.decision === "auto" && row.tier === "auto" &&
+      row.reachEffective !== "others";
+    if (!row.quote) return await deny(["no_quote"]);
+    let a: ApprovalRecord | undefined;
+    if (!silent) {
+      if (!row.dmMessageId) return await deny(["no_dm"]);
+      a = await ledger.getApprovalForRequest(row.id);
+      if (!a) return await deny(["no_approval"]);
+      if (row.decision === "ask" && !(a.kind === "approve" && a.usedAt && a.verdict === "approve")) {
+        return await deny(["not_approved"]);
+      }
+      if (a.kind === "veto" && a.usedAt) return await deny(["vetoed"]);
     }
-    if (a.kind === "veto" && a.usedAt) return await deny(["vetoed"]);
+    const boundCents = a ? a.boundCents : row.quote.totalCents;
 
     const req = rowToRequest(row);
     let q2: Quote;
@@ -822,8 +928,12 @@ export class Orchestrator {
     }
     const qp = quoteProblem(q2);
     if (qp) return await deny([qp]);
-    const bind = verifyBinding(a, { requestId: row.id, vendor: row.vendor, quoteTotalCents: q2.totalCents });
-    if (!bind.ok) return await deny([bind.reason]);
+    if (a) {
+      const bind = verifyBinding(a, { requestId: row.id, vendor: row.vendor, quoteTotalCents: q2.totalCents });
+      if (!bind.ok) return await deny([bind.reason]);
+    } else if (q2.totalCents !== boundCents) {
+      return await deny(["quote_changed"]); // silent: bound to the quote it was judged on
+    }
     if (q2.totalCents > row.maxTotalCents) return await deny(["over_agent_max"]);
 
     const adapterReach = adapter.reachFor(req);
@@ -850,13 +960,16 @@ export class Orchestrator {
       if ((pr.decision === "ask" || eff === "others") && row.decision !== "ask") {
         return { deny: ["policy_changed", "now_needs_ask"] };
       }
+      if (silent && !noticeFor({ ...pr, effectiveReach: eff }, q2.totalCents, row.budget, this.notice).silent) {
+        return { deny: ["policy_changed", "now_needs_dm"] };
+      }
       return { placing: await this.move(cur, "placing", { quote: q2 }, "redecide_ok", { redecide: pr }) };
     });
     if ("skip" in gate) return "skipped";
     if (gate.deny) return await deny(gate.deny);
     const placing = gate.placing!;
 
-    const hardCap = Math.min(a.boundCents, row.maxTotalCents);
+    const hardCap = Math.min(boundCents, row.maxTotalCents);
     let order;
     try {
       order = await adapter.place(req, q2, hardCap, row.idempotencyKey);
@@ -1035,7 +1148,7 @@ export class MemoryLedger implements LedgerPort {
       vendor: req.vendor, budget: req.budget ?? "general", reachDeclared: req.reach, items: req.items, reason: req.reason,
       maxTotalCents: req.maxTotalCents, state: "received", dmAttempts: 0, createdAt: now.toISOString(),
       updatedAt: now.toISOString(), ...(req.shipTo ? { shipTo: req.shipTo } : {}), ...(req.category ? { category: req.category } : {}),
-      ...(req.whyNote ? { whyNote: req.whyNote } : {}),
+      ...(req.whyNote ? { whyNote: req.whyNote } : {}), ...(req.hint ? { hint: req.hint } : {}),
     };
     this.rows.set(id, row);
     this.hashes.set(id, hash);

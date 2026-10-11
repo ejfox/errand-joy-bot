@@ -14,7 +14,7 @@
 //   HEALTH_ALERT_CMD  optional executable for infra alerts (no-op when unset)
 // Timezone and quiet hours are POLICY: they come from config.toml (config.ts), never env.
 import type { DmResult, Notifier, Quote, RequestRow, ShipTo } from "./types.ts";
-import { OWNER_HOME, QUIET_HOURS } from "./types.ts";
+import { DEFAULT_HINT, HINT_MAX_CHARS, OWNER_HOME, QUIET_HOURS } from "./types.ts";
 
 const DM_TIMEOUT_MS = 10_000;
 
@@ -308,19 +308,54 @@ function shipLine(row: DmRow): string[] {
 }
 
 /**
+ * What a sealed DM may say about WHERE the money goes: a vendor category, never a product.
+ * Unknown vendors fall back to their (cleaned) id, which names a shop, not an item.
+ */
+export const VENDOR_LABELS: Record<string, string> = {
+  zinc: "Amazon via Zinc",
+  mock: "the mock shop",
+};
+
+export function vendorLabel(vendor: string): string {
+  return Object.hasOwn(VENDOR_LABELS, vendor) ? VENDOR_LABELS[vendor] : clean(vendor, 40);
+}
+
+/** The agent's teaser for a sealed DM, or the default. Never the item. */
+export function sealedHint(row: Pick<RequestRow, "hint">): string {
+  return clean(row.hint, HINT_MAX_CHARS) || DEFAULT_HINT;
+}
+
+export interface Headroom {
+  dayCents: number;
+  monthCents: number;
+}
+
+/**
  * Ask tier: TWO links, each with its own token. The approve link can only approve and the deny
  * link can only deny. Each token sits in its link's #fragment, so opening a link (or a preview
  * crawler fetching it) never sends a token to the relay; the approve token reaches the relay only
  * when the owner taps Approve on the page.
+ * `sealed` (reach self/world with [notify] sealed = true): amount, headroom, vendor category and the
+ * agent's hint only. No title, URL, SKU, reason or requester. The why-note on delivery reveals it.
  */
 export function approvalDm(
-  row: DmRow,
+  row: DmRow & { hint?: string },
   q: Pick<Quote, "totalCents">,
   approveUrl: string,
   denyUrl: string,
-  opts: { ttlHours?: number; headroom?: { dayCents: number; monthCents: number } } = {},
+  opts: { ttlHours?: number; headroom?: Headroom; sealed?: boolean } = {},
 ): string {
   const h = opts.headroom;
+  if (opts.sealed) {
+    return [
+      `purchase-gate: sealed request for ${fmtCents(q.totalCents)} from ${vendorLabel(row.vendor)}`,
+      `hint: ${sealedHint(row)}`,
+      ...(h ? [`if approved: ${fmtCents(h.dayCents)} left today, ${fmtCents(h.monthCents)} this month`] : []),
+      `sealed: what it is and why arrive with the delivery`,
+      `approve (${opts.ttlHours ?? 24}h): ${link(approveUrl)}`,
+      `deny: ${link(denyUrl)}`,
+    ].join("\n");
+  }
   return [
     `purchase-gate: ${clean(row.requester, 40)} wants ${fmtCents(q.totalCents)} from ${clean(row.vendor, 40)}`,
     `items: ${itemsLine(row)}`,
@@ -334,12 +369,15 @@ export function approvalDm(
 
 /** Auto tier pre-order notice with a deny-only link. Joy variant NEVER names the item. */
 export function vetoDm(
-  row: DmRow,
+  row: DmRow & { hint?: string },
   q: Pick<Quote, "totalCents">,
   url: string,
   opts: { joy?: boolean; windowMin?: number } = {},
 ): string {
-  if (opts.joy) return `robot spent ${fmtCents(q.totalCents)} on something this week. tap to veto: ${link(url)}`;
+  if (opts.joy) {
+    const hint = row.hint ? ` (hint: ${sealedHint(row)})` : "";
+    return `robot spent ${fmtCents(q.totalCents)} on something this week${hint}. tap to veto: ${link(url)}`;
+  }
   return [
     `purchase-gate: buying ${fmtCents(q.totalCents)} from ${clean(row.vendor, 40)} in ${opts.windowMin ?? 10} min unless you veto`,
     `items: ${itemsLine(row)}`,
@@ -354,7 +392,23 @@ function fmtWindow(min: number): string {
 }
 
 /** Fund tier: paid from the robot fund after a veto window (default 2h). */
-export function fundVetoDm(row: DmRow, q: Pick<Quote, "totalCents">, url: string, windowMin = 120): string {
+export function fundVetoDm(
+  row: DmRow & { hint?: string },
+  q: Pick<Quote, "totalCents">,
+  url: string,
+  windowMin = 120,
+  opts: { sealed?: boolean; headroom?: Headroom; fundAfterCents?: number } = {},
+): string {
+  if (opts.sealed) {
+    const h = opts.headroom;
+    return [
+      `purchase-gate: robot fund pays ${fmtCents(q.totalCents)} to ${vendorLabel(row.vendor)} in ${fmtWindow(windowMin)} unless you veto (sealed)`,
+      `hint: ${sealedHint(row)}`,
+      ...(opts.fundAfterCents !== undefined ? [`fund after: ${fmtCents(opts.fundAfterCents)}`] : []),
+      ...(h ? [`caps: ${fmtCents(h.dayCents)} left today, ${fmtCents(h.monthCents)} this month`] : []),
+      `veto: ${link(url)}`,
+    ].join("\n");
+  }
   return [
     `purchase-gate: robot fund pays ${fmtCents(q.totalCents)} to ${clean(row.vendor, 40)} in ${fmtWindow(windowMin)} unless you veto`,
     `items: ${itemsLine(row)}`,
@@ -363,11 +417,17 @@ export function fundVetoDm(row: DmRow, q: Pick<Quote, "totalCents">, url: string
   ].join("\n");
 }
 
-/** After a joy purchase is delivered, the envelope opens. */
-export function deliveredWhyNoteDm(row: Pick<RequestRow, "items" | "whyNote" | "reason">): string {
+/**
+ * THE REVEAL: after a silent, sealed or joy purchase is delivered, the envelope opens: what it is,
+ * why the robot picked it (whyNote, else reason) and the item link when there is one. The link was
+ * validated as https at intake and is wrapped in <> (no preview); it carries no approval token.
+ */
+export function deliveredWhyNoteDm(row: Pick<RequestRow, "items" | "whyNote" | "reason"> & { budget?: string }): string {
+  const url = row.items.find((i) => i.url)?.url;
   return [
-    `your robot's surprise arrived: ${itemsLine(row)}`,
+    `your robot's ${row.budget === "joy" ? "surprise" : "purchase"} arrived: ${itemsLine(row)}`,
     `why it picked this: ${clean(row.whyNote || row.reason, 280)}`,
+    ...(url && /^https:\/\/[^\s<>]+$/.test(url) ? [`link: ${link(url)}`] : []),
   ].join("\n");
 }
 

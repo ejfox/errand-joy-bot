@@ -3,6 +3,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { validateConfig } from "./config.ts";
 import { buildDeps } from "./wiring.ts";
+import { createApp } from "./server.ts";
 import { MockAdapter } from "./adapters/mock.ts";
 import { FakeHealthAlerter, FakeNotifier } from "./notify.ts";
 import { HttpRelayClient } from "./relay_client.ts";
@@ -82,8 +83,8 @@ function req(sku: string, over: Record<string, unknown> = {}) {
   };
 }
 
-Deno.test("(a) $20 auto → veto DM → cancel window elapses → placed", async () => {
-  const h = await harness({ tiers: { auto_max_cents: 2500, ask_max_cents: 10_000, fund_enabled: false, fund_max_cents: 0 }, caps: { day_cents: 2500, month_cents: 7500, vendor_month_cents: 7500 }, joy: { week_cents: 1000 } });
+Deno.test("(a) $20 auto (silent tier off) → veto DM → cancel window elapses → placed", async () => {
+  const h = await harness({ tiers: { auto_max_cents: 2500, ask_max_cents: 10_000, fund_enabled: false, fund_max_cents: 0 }, caps: { day_cents: 2500, month_cents: 7500, vendor_month_cents: 7500 }, joy: { week_cents: 1000 }, notify: { silent_below_cents: 0 } });
   const row = await h.orch.submit(req("S20"));
   assertEquals([row.state, row.tier, row.quote?.totalCents], ["dm_delivered", "auto", 2000]);
   assertEquals(tokensIn(h.notifier.messages[0]).length, 1, "veto DM carries only a deny link");
@@ -127,8 +128,8 @@ Deno.test("(c) $1200 → refused outright, no DM", async () => {
   assertEquals(h.notifier.messages.length, 0);
 });
 
-Deno.test("(d) joy: the veto DM and relay page never name the item; a veto tap → cancelled", async () => {
-  const h = await harness();
+Deno.test("(d) joy (silent tier off): the veto DM and relay page never name the item; a veto tap → cancelled", async () => {
+  const h = await harness({ notify: { silent_below_cents: 0 } });
   const row = await h.orch.submit(req("S20", {
     budget: "joy",
     items: [{ sku: "S20", qty: 1, title: "Secret Kite" }],
@@ -197,7 +198,7 @@ Deno.test("(g) the relay approving without the approve token is ignored; the den
 });
 
 Deno.test("a veto tapped on a DM the transport reported as failed still cancels; no re-DM, no order", async () => {
-  const h = await harness();
+  const h = await harness({ notify: { silent_below_cents: 0 } });
   // The DM arrives, but the transport times out and reports failure.
   const lying = { messages: [] as string[], send(t: string) {
     this.messages.push(t);
@@ -286,6 +287,66 @@ Deno.test("tokens never land in the gate DB", async () => {
   assert(!dump.includes(a.token) && !dump.includes(d.token));
   assert(dump.includes(await hashToken(a.token)));
   assert(dump.includes(a.id) && dump.includes(d.id), "the public lookupIds are stored");
+});
+
+Deno.test("silent tier on the real ledger: $20 → placed with no DM; the flag persists; reveal before close", async () => {
+  const h = await harness(); // default [notify]: silent below $40
+  const row = await h.orch.submit(req("S20", { whyNote: "the old supply was buzzing", hint: "for the bench" }));
+  assertEquals([row.state, row.silent, row.sealed, row.hint], ["approved", true, false, "for the bench"]);
+  assertEquals(h.notifier.messages.length, 0);
+  // the persisted flag is what the ledger's own transition check sees
+  const flags = h.db.prepare("SELECT silent, sealed, hint FROM requests WHERE id = ?").get(row.id) as Record<string, unknown>;
+  assertEquals([Number(flags.silent), Number(flags.sealed), flags.hint], [1, 0, "for the bench"]);
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.state, "placed");
+  // mock orders advance one step per status poll: open → shipped → delivered
+  await h.orch.tick();
+  h.notifier.fail = true;
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.state, "delivered", "no why-note yet → stays delivered");
+  h.notifier.fail = false;
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.state, "closed");
+  assertEquals(h.notifier.messages.length, 1);
+  assert(h.notifier.messages[0].includes("Item S20") && h.notifier.messages[0].includes("buzzing"));
+});
+
+Deno.test("sealed ask on the real relay: neither the DM nor the page names the item", async () => {
+  const h = await harness();
+  const row = await h.orch.submit(req("S80", { items: [{ sku: "S80", qty: 1, title: "Rigol Oscilloscope", url: "https://shop.example/rigol" }], hint: "for seeing signals" }));
+  assertEquals([row.state, row.sealed], ["pending_approval", true]);
+  const dm = h.notifier.messages[0];
+  const masked = dm.replace(/<https:\/\/relay\.test\/[^>]+>/g, "<link>");
+  assert(!/rigol|oscilloscope|shop\.example|S80/i.test(masked), dm);
+  const [approve] = tokensIn(dm);
+  const page = await (await view(approve)).text();
+  assert(!/rigol|oscilloscope|shop\.example/i.test(page) && page.includes("for seeing signals"), "page is sealed too");
+});
+
+Deno.test("import-order: a hand-placed order counts in the windows and reconcile matches it", async () => {
+  const charge = { vendorChargeId: "ch-hand-1", amountCents: 2600, at: new Date().toISOString(), vendorOrderId: "hand-1" };
+  const h = await harness({}, { phantomCharges: [charge] });
+  const app = createApp({ ...h.server, agentToken: "a".repeat(40), adminToken: "b".repeat(40) });
+  const post = (body: unknown) =>
+    app.request("/internal/import-order", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${"b".repeat(40)}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const body = { vendor: "mock", vendorOrderId: "hand-1", cents: 2600, note: "bought by hand while the gate was down" };
+  const res = await post(body);
+  assertEquals(res.status, 201);
+  const row = await res.json();
+  assertEquals([row.state, row.requester, row.tier, row.reachEffective, row.budget, row.finalCents], ["placed", "manual-import", "auto", "self", "general", 2600]);
+  // idempotent on vendor + order id; a different amount is a conflict
+  const again = await post(body);
+  assertEquals([again.status, (await again.json()).id], [200, row.id]);
+  assertEquals((await post({ ...body, cents: 2700 })).status, 409);
+  assertEquals((await post({ ...body, vendorOrderId: "has space" })).status, 400);
+  assertEquals(h.ledger.windowsFor("mock", "general", h.clock.now())["global/day"].spentCents, 2600);
+  const run = await h.reconcile();
+  assertEquals([run.ok, run.unmatched, run.mismatched], [1, 0, 0]);
+  assertEquals(h.ledger.isStopped(), false);
 });
 
 Deno.test("cleanup", async () => {

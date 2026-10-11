@@ -12,7 +12,8 @@ import {
 import { IllegalTransition, type PolicyResult, type State, StopActive } from "./types.ts";
 
 const ALL: State[] = Object.keys(TRANSITIONS) as State[];
-const go: TransitionCtx = { stopped: false, messageId: "m1", whyNoteDelivered: true };
+// `silent: true` so the silent-only edge (decided → approved) counts as legal in the table sweep.
+const go: TransitionCtx = { stopped: false, messageId: "m1", whyNoteDelivered: true, silent: true };
 const result = (decision: PolicyResult["decision"]): PolicyResult => ({
   decision,
   tier: "auto",
@@ -29,6 +30,7 @@ const LEGAL: [State, State][] = [
   ["quoted", "cancelled"],
   ["decided", "denied"],
   ["decided", "dm_pending"],
+  ["decided", "approved"], // silent tier only
   ["decided", "cancelled"],
   ["dm_pending", "dm_delivered"],
   ["dm_pending", "expired"],
@@ -74,8 +76,26 @@ for (const from of ALL) {
 
 Deno.test("placing is only reachable from approved", () => {
   assertEquals(ALL.filter((f) => TRANSITIONS[f].includes("placing")), ["approved"]);
-  assertEquals(ALL.filter((f) => TRANSITIONS[f].includes("approved")), ["dm_delivered", "pending_approval"]);
+  assertEquals(ALL.filter((f) => TRANSITIONS[f].includes("approved")), ["decided", "dm_delivered", "pending_approval"]);
   assertEquals(ALL.filter((f) => TRANSITIONS[f].includes("pending_approval")), ["dm_delivered"]);
+});
+
+Deno.test("decided → approved is the silent tier only", () => {
+  assertThrows(() => assertTransition("decided", "approved", { stopped: false }), IllegalTransition);
+  assertThrows(() => assertTransition("decided", "approved", { stopped: false, silent: false }), IllegalTransition);
+  assertThrows(() => assertTransition("decided", "approved", { stopped: true, silent: true }), StopActive);
+  assertTransition("decided", "approved", { stopped: false, silent: true });
+});
+
+Deno.test("approved → placing needs a delivered DM unless the row is silent", () => {
+  const ok = result("auto");
+  assertThrows(() => assertTransition("approved", "placing", { stopped: false, redecide: ok }), IllegalTransition);
+  assertThrows(
+    () => assertTransition("approved", "placing", { stopped: false, redecide: ok, silent: false, sealed: true }),
+    IllegalTransition,
+  );
+  assertTransition("approved", "placing", { stopped: false, redecide: ok, messageId: "m1" });
+  assertTransition("approved", "placing", { stopped: false, redecide: ok, silent: true });
 });
 
 Deno.test("dm_pending → dm_delivered needs a messageId", () => {
@@ -109,6 +129,11 @@ const closeCases: { name: string; ctx: TransitionCtx; ok: boolean }[] = [
   { name: "general immediately", ctx: { stopped: false, budget: "general" }, ok: true },
   { name: "no budget given", ctx: { stopped: false }, ok: true },
   { name: "explicit why-note false", ctx: { stopped: false, whyNoteDelivered: false }, ok: false },
+  { name: "silent without why-note", ctx: { stopped: false, budget: "general", silent: true }, ok: false },
+  { name: "silent with why-note", ctx: { stopped: false, silent: true, whyNoteDelivered: true }, ok: true },
+  { name: "sealed without why-note", ctx: { stopped: false, budget: "general", sealed: true }, ok: false },
+  { name: "sealed with why-note", ctx: { stopped: false, sealed: true, whyNoteDelivered: true }, ok: true },
+  { name: "open (neither) closes immediately", ctx: { stopped: false, silent: false, sealed: false }, ok: true },
 ];
 for (const c of closeCases) {
   Deno.test(`delivered → closed: ${c.name}`, () => {
@@ -122,8 +147,8 @@ Deno.test("approved → placing re-decide gate", () => {
     () => assertTransition("approved", "placing", { stopped: false, redecide: result("deny") }),
     IllegalTransition,
   );
-  assertTransition("approved", "placing", { stopped: false, redecide: result("auto") });
-  assertTransition("approved", "placing", { stopped: false, redecide: result("ask") });
+  assertTransition("approved", "placing", { stopped: false, messageId: "m1", redecide: result("auto") });
+  assertTransition("approved", "placing", { stopped: false, messageId: "m1", redecide: result("ask") });
   assertTransition("approved", "denied", { stopped: false, redecide: result("deny") });
 });
 
@@ -131,6 +156,9 @@ Deno.test("nextAfterDecide / canPlace / nextAfterApproved", () => {
   assertEquals(nextAfterDecide(result("deny")), "denied");
   assertEquals(nextAfterDecide(result("auto")), "dm_pending");
   assertEquals(nextAfterDecide(result("ask")), "dm_pending");
+  assertEquals(nextAfterDecide(result("auto"), true), "approved");
+  assertEquals(nextAfterDecide(result("ask"), true), "dm_pending");
+  assertEquals(nextAfterDecide(result("deny"), true), "denied");
   assertEquals(canPlace(result("deny")), false);
   assertEquals(canPlace(result("ask")), true);
   assertEquals(nextAfterApproved(result("deny")), "denied");

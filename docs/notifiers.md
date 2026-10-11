@@ -94,7 +94,9 @@ platform's "send direct message" API, return `{"messageId": "<id>"}`.
 ## Quiet hours
 
 `[quiet_hours]` in `config.toml` (in `timezone`) queues DMs instead of sending them.
-Because nothing is placed before its DM is delivered, purchases wait too.
+Because nothing non-silent is placed before its DM is delivered, those purchases wait too.
+Silent purchases (`[notify] silent_below_cents`) need no pre-order DM; their delivery
+why-notes wait for the morning, and they don't close until one is delivered.
 
 ## Adding a transport
 

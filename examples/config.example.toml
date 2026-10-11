@@ -46,7 +46,8 @@ owner_home_label = "owner-home"
 
 [tiers]
 # Quoted total BELOW this: "auto". The owner gets a DM with a veto link first, then a
-# cancel window (windows.auto_cancel_minutes), then the order is placed.
+# cancel window (windows.auto_cancel_minutes), then the order is placed. The bottom of
+# the auto tier can be SILENT instead (see [notify] below).
 auto_max_cents = 6900
 # From auto_max_cents up to and including this: "ask". Nothing happens until the owner
 # taps Approve, and the link expires after windows.approval_ttl_hours.
@@ -79,17 +80,36 @@ vendor_month_cents = 10000
 
 [joy]
 # The joy budget: small surprises the robot picks for you. Auto-tier only and reach
-# "self" only (it can never buy for or reach other people). The pre-order DM is a
-# sealed envelope ("robot spent $23 on something, tap to veto") and the why-note
-# arrives on delivery. Set enabled = false to turn it off.
+# "self" only (it can never buy for or reach other people). Picks under
+# notify.silent_below_cents are silent; picks above it get a sealed pre-order DM
+# ("robot spent $55 on something, tap to veto"). Either way the why-note arrives on
+# delivery. Set enabled = false to turn it off.
 enabled = true
 # ISO-week cap. Joy spend ALSO counts against caps.day_cents and caps.month_cents
 # (it lives inside the monthly cap, it is not extra money).
 week_cents = 4000
 
+# Optional. Which purchases DM you before they happen, and what those DMs say.
+# [notify]
+# SILENT tier: auto-tier purchases (reach "self" or "world", never "others") whose quoted
+# total is BELOW this get NO pre-order DM, no veto link and no cancel window: they are
+# placed on the next tick. Caps, velocity, STOP, REACH and the ledger still apply, and
+# you get a why-note DM on delivery (what it is, why the robot picked it, a link).
+# Joy picks under this are silent too. 0 turns the silent tier off (every auto purchase
+# DMs first). Raising it is looser and needs i_understand_the_risk; it can never exceed
+# tiers.auto_max_cents. Default: 4000 ($40), or tiers.auto_max_cents if that is lower.
+# silent_below_cents = 4000
+# SEALED approvals: ask-tier approval DMs, fund-tier veto DMs and the relay page never
+# name the item when its reach is "self" or "world". They show the amount, your cap
+# headroom, the vendor category (e.g. "Amazon via Zinc") and a short hint the agent
+# wrote; the why-note on delivery reveals the rest. Reach "others" always shows the full
+# item, recipient and reason. Set false to see items in every DM.
+# sealed = true
+
 [quiet_hours]
-# DMs are queued (not sent) between start and end, in `timezone`. Because nothing is
-# placed before its DM is delivered, purchases also wait. Same start and end = off.
+# DMs are queued (not sent) between start and end, in `timezone`. Because nothing
+# non-silent is placed before its DM is delivered, those purchases also wait (silent ones
+# don't; their delivery why-note waits instead). Same start and end = off.
 start = "22:00"
 end = "07:30"
 

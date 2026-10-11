@@ -25,6 +25,24 @@ export const QUIET_HOURS = { start: "22:00", end: "07:30", tz: "America/New_York
 export const DM_DOWN_STOP_MS = 24 * 3600_000; // DM path down this long → STOP
 export const MIN_REASON_CHARS = 60; // intake refuses shorter `reason` text
 
+// ── Notice policy (config [notify]) ───────────────────────────────────────
+/** auto tier, reach self/world, quoted total < this → SILENT: no pre-order DM, no cancel window. */
+export const SILENT_BELOW_CENTS = 4_000;
+/** Ask and fund approval DMs for reach self/world never name the item (revealed on delivery). */
+export const SEALED_DEFAULT = true;
+/** Fallback hint in a sealed DM when the agent wrote none. */
+export const DEFAULT_HINT = "something for you";
+export const HINT_MAX_CHARS = 80;
+
+export interface NoticePolicy {
+  /** Silent tier ceiling (exclusive). 0 turns the silent tier off. */
+  silentBelowCents: number;
+  /** Seal ask / fund_auto DMs and relay summaries for reach self/world. */
+  sealed: boolean;
+}
+
+export const DEFAULT_NOTICE: NoticePolicy = { silentBelowCents: SILENT_BELOW_CENTS, sealed: SEALED_DEFAULT };
+
 /** The ShipTo literal for "the owner's own address" (config `owner_home_label`). */
 export const OWNER_HOME = "owner-home";
 
@@ -85,7 +103,7 @@ export interface Item {
 
 export type ShipTo =
   | typeof OWNER_HOME
-  | { name: string; line1: string; city: string; state: string; zip: string };
+  | { name: string; line1: string; city: string; state: string; zip: string; phone?: string };
 
 export interface PurchaseRequest {
   idempotencyKey: string; // UNIQUE; same key + different payload hash → STOP
@@ -99,8 +117,16 @@ export interface PurchaseRequest {
   budget?: "general" | "joy";
   category?: string;
   shipTo?: ShipTo; // anything other than "owner-home" ⇒ reach "others" (enforced by guarded())
-  /** Joy: the note the owner reads ON DELIVERY (never in the sealed pre-order DM). Falls back to `reason`. */
+  /**
+   * The note the owner reads ON DELIVERY for every silent or sealed purchase (joy included): what
+   * it is and why the robot picked it. Never in a pre-order DM. Falls back to `reason`.
+   */
   whyNote?: string;
+  /**
+   * A short teaser (max 80 chars) shown INSTEAD of the item in sealed DMs and relay pages. Must not
+   * contain any item-title word of 4+ letters (intake rejects it). Default "something for you".
+   */
+  hint?: string;
 }
 
 export interface Quote {
@@ -108,6 +134,8 @@ export interface Quote {
   taxCents: number;
   shippingCents: number;
   totalCents: number; // tiers are computed on THIS, never the agent's estimate
+  /** A vendor/API per-order fee (e.g. Zinc's $1). subtotal + tax + shipping + fee = total. */
+  feeCents?: number;
   currency: "USD";
   vendorRef?: string;
   quotedAt: string; // ISO
@@ -164,7 +192,10 @@ export interface VendorAdapter {
   reachFor(req: PurchaseRequest): Reach; // floor the agent cannot lower
   quote(req: PurchaseRequest): Promise<Quote>; // dry run, no money moves
   place(req: PurchaseRequest, q: Quote, hardCapCents: number, idempotencyKey: string): Promise<Order>;
-  status(vendorOrderId: string): Promise<{ state: "open" | "shipped" | "delivered" | "cancelled"; tracking?: string; raw?: unknown }>;
+  /** "failed" = the vendor gave up on the order (treated like "cancelled" by the gate). */
+  status(
+    vendorOrderId: string,
+  ): Promise<{ state: "open" | "shipped" | "delivered" | "cancelled" | "failed"; tracking?: string; raw?: unknown }>;
   cancel(vendorOrderId: string): Promise<boolean>;
   listCharges(sinceISO: string): Promise<Charge[]>;
   pause(): Promise<void>; // kill-switch instrument step (pause card / disable key)
@@ -200,7 +231,7 @@ export interface ApprovalRecord {
   vendor: string;
   boundCents: number; // quoted total at mint time; a re-quote invalidates
   kind: "approve" | "veto"; // approve = ask tier; veto = deny-only link for auto / fund_auto / joy
-  summary: string; // rendered on the page. Joy summary must NOT name the item (sealed envelope)
+  summary: string; // rendered on the page. Joy and sealed summaries must NOT name the item
   expiresAt: string;
   usedAt?: string;
   verdict?: "approve" | "deny";
@@ -264,6 +295,11 @@ export interface RequestRow {
   dmAttempts: number;
   dmLastError?: string;
   whyNote?: string;
+  hint?: string;
+  /** Set at decide: no pre-order DM, no approval record; decided → approved directly. */
+  silent?: boolean;
+  /** Set at decide: the pre-order DM and relay summary never name the item. */
+  sealed?: boolean;
   rating?: number; // owner's one-tap rating after delivery (learning signal)
   createdAt: string;
   updatedAt: string;
