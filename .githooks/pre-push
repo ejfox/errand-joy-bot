@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# errand-joy-bot pre-push: scan every commit about to leave this machine, full history of the range.
+set -euo pipefail
+command -v gitleaks >/dev/null 2>&1 || { echo "BLOCKED: gitleaks is not installed." >&2; exit 1; }
+root=$(git rev-parse --show-toplevel)
+zero=0000000000000000000000000000000000000000
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # branch deletion
+  if [ "$remote_sha" = "$zero" ]; then range="$local_sha"; else range="$remote_sha..$local_sha"; fi
+  if ! gitleaks git --log-opts="$range" --redact --no-banner --config "$root/.gitleaks.toml" "$root" >&2; then
+    echo "BLOCKED: gitleaks found a possible secret in commits being pushed ($range). Rewrite those commits and revoke the key." >&2
+    exit 1
+  fi
+done
+exit 0

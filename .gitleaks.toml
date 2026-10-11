@@ -1,0 +1,63 @@
+# errand-joy-bot secret rules. Used by .githooks/pre-commit, .githooks/pre-push and CI.
+# This project moves real money. A leaked key here can spend it. Rules are strict on purpose.
+
+title = "errand-joy-bot"
+
+[extend]
+useDefault = true # gitleaks' ~200 built-in rules (Anthropic, OpenAI, AWS, GitHub, Stripe, Slack, ...)
+
+[[rules]]
+id = "openrouter-key"
+description = "OpenRouter API key"
+regex = '''sk-or-v1-[a-f0-9]{32,}'''
+keywords = ["sk-or-v1-"]
+
+[[rules]]
+id = "discord-bot-token"
+description = "Discord bot token"
+regex = '''[MNO][A-Za-z\d_-]{23,25}\.[A-Za-z\d_-]{6}\.[A-Za-z\d_-]{27,}'''
+
+[[rules]]
+id = "discord-webhook"
+description = "Discord webhook URL"
+regex = '''https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]{30,}'''
+keywords = ["discord"]
+
+[[rules]]
+id = "privacy-com-key"
+description = "Privacy.com API key (UUID assigned to a privacy/lithic var)"
+regex = '''(?i)(privacy|lithic)[a-z_]*(key|token)\s*[:=]\s*['"]?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+keywords = ["privacy", "lithic"]
+
+[[rules]]
+id = "gate-env-assignment"
+description = "A value assigned to one of this project's secret env vars"
+# Empty assignments (FOO=) and obvious placeholders are allowed; anything else is a leak.
+regex = '''(?m)^\s*(?:export\s+)?(GATE_AGENT_TOKEN|GATE_ADMIN_TOKEN|RELAY_TOKEN|NOTIFY_DM_TOKEN|NTFY_TOKEN|NTFY_TOPIC|[A-Z0-9]+_API_KEY|[A-Z0-9]+_SECRET)\s*=\s*['"]?([^\s'"#<$]{8,})'''
+secretGroup = 2
+[rules.allowlist]
+regexes = ['''(?i)^(changeme|placeholder|example|your[-_].*|x{8,}|\.{3}.*)$''']
+
+[[rules]]
+id = "generic-long-token-assignment"
+description = "Long random-looking value assigned to a *token/*secret/*key name"
+regex = '''(?i)\b[a-z0-9_]*(token|secret|api[_-]?key|password)\b\s*[:=]\s*['"]([A-Za-z0-9_\-+/=]{24,})['"]'''
+secretGroup = 2
+entropy = 3.5
+
+[[rules]]
+id = "private-key-block"
+description = "Private key material"
+regex = '''-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY'''
+keywords = ["private key"]
+
+[allowlist]
+description = "Test fixtures and the scanner's own pattern lists"
+paths = [
+  '''(^|/)deno\.lock$''',
+  '''\.gitleaks\.toml$''',
+]
+# Fake tokens used by the test suite and docs are recognisably fake.
+regexes = [
+  '''(?i)^(test|fake|dummy|example|sample)[-_a-z0-9]*$''', # whole value must be obviously fake
+]

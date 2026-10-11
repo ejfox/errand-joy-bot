@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# errand-joy-bot pre-commit: refuse any commit that could carry a secret.
+# Enable once per clone:  deno task hooks   (sets core.hooksPath=.githooks)
+# This project moves real money. There is no "skip" switch here on purpose; CI and
+# GitHub push protection re-check everything, so --no-verify only delays the failure.
+set -euo pipefail
+
+red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+fail=0
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+# 1. Files that must never be committed, whatever they contain.
+forbidden='(^|/)\.env($|\.)|(^|/)config\.toml$|\.db($|-)|(^|/)data/|(^|/)STOP$|\.pem$|\.key$|\.p12$|\.pfx$|id_(rsa|ed25519|ecdsa)|(^|/)\.deno-cache/|(^|/)(overlays|local)/|\.bak(-|$)'
+while IFS= read -r f; do
+  [ "$f" = ".env.example" ] && continue
+  if [[ "$f" =~ $forbidden ]]; then
+    red "BLOCKED: '$f' must never be committed (env, config, database, key or backup file)."
+    fail=1
+  fi
+done <<< "$staged"
+
+# 2. gitleaks over the staged diff, with the repo's strict rules. Required, not optional.
+if ! command -v gitleaks >/dev/null 2>&1; then
+  red "BLOCKED: gitleaks is not installed. Install it (brew install gitleaks / https://github.com/gitleaks/gitleaks) and commit again."
+  exit 1
+fi
+if ! gitleaks git --staged --pre-commit --redact --no-banner \
+     --config "$(git rev-parse --show-toplevel)/.gitleaks.toml" >&2; then
+  red "BLOCKED: gitleaks found something that looks like a secret (shown redacted above)."
+  red "If it is a real key: unstage it, REVOKE it at the vendor, and move it to .env."
+  fail=1
+fi
+
+# 3. Belt and braces: well-known key prefixes, even if a gitleaks rule regresses.
+if git diff --cached -U0 --diff-filter=ACMR -- . ':(exclude).gitleaks.toml' ':(exclude).githooks/*' ':(exclude)deno.lock' \
+   | grep -E '^\+' \
+   | grep -nE 'sk-or-v1-[A-Za-z0-9]{20}|sk-ant-[A-Za-z0-9_-]{20}|sk-proj-[A-Za-z0-9_-]{20}|sk_live_[A-Za-z0-9]{10}|rk_live_[A-Za-z0-9]{10}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30}|github_pat_[A-Za-z0-9_]{30}|xox[bp]-[A-Za-z0-9-]{10}' >/dev/null; then
+  red "BLOCKED: a known API-key prefix (sk-or-v1-, sk-ant-, sk_live_, AKIA, ghp_, xoxb- ...) is in the staged diff."
+  fail=1
+fi
+
+exit "$fail"
