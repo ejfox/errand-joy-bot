@@ -821,7 +821,7 @@ card (+3% service fee) or ACH; usage is drawn from Lob Credits.
    notification under billing.
 2. Live postcards need `use_type`; the adapter sends `operational`, so no account default is needed.
 3. Take the live secret key (`live_…`) under Settings → API Keys, name it `lob-<host>-<yyyy-mm>`
-   (e.g. `lob-ejfvps-2026-10`; if the dashboard has no name field, record that name in your key
+   (e.g. `lob-myvps-2026-10`; if the dashboard has no name field, record that name in your key
    inventory) and paste it with `ops/set-key.sh LOB_API_KEY`.
 
 **Test mode.** A `test_…` key makes free postcards that never print or mail. The opt-in live test
