@@ -27,8 +27,8 @@ const TIMEOUT_MS = 20_000;
 
 /**
  * What an Item's `sku` may be. `url` is the front image (postcards: https JPG/PNG/PDF, e.g. a
- * render) or the letter PDF; `title` is the postcard's back message (it is what gets printed, so
- * the owner sees it in every non-sealed DM).
+ * render) or the letter PDF; `message` is the postcard's back message (≤ 500 chars; it is what
+ * gets printed, so every non-sealed DM shows it as "printed message"). `title` is a label only.
  */
 export const STANNP_PRODUCTS = {
   "postcard-4x6": { kind: "postcard", size: "4x6" },
@@ -80,6 +80,8 @@ export function stannpProduct(req: PurchaseRequest): { kind: Kind; size?: string
   if (!Object.hasOwn(STANNP_PRODUCTS, item.sku)) throw new GuardRefused("stannp_unknown_sku");
   const p = STANNP_PRODUCTS[item.sku as StannpSku];
   if (!item.url || !isHttpsUrl(item.url)) throw new GuardRefused(p.kind === "letter" ? "stannp_letter_pdf_url_missing" : "stannp_front_image_url_missing");
+  // A letter prints its PDF only: a message would be silently dropped, so refuse it.
+  if (p.kind === "letter" && item.message !== undefined) throw new GuardRefused("stannp_letter_has_no_message");
   return { kind: p.kind, size: p.size, item };
 }
 
@@ -345,7 +347,7 @@ export class StannpAdapter implements VendorAdapter {
     if (kind === "postcard") {
       f.set("size", size!);
       f.set("front", item.url!);
-      if (item.title) f.set("message", item.title);
+      if (item.message) f.set("message", item.message); // `title` is a label only; it is never printed
     } else {
       f.set("file", item.url!);
     }

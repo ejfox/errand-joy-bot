@@ -21,6 +21,11 @@ import {
   HINT_MAX_CHARS,
   IdempotencyConflict,
   IllegalTransition,
+  type Item,
+  ITEM_AOI_MAX,
+  ITEM_ATTRIBUTES_MAX,
+  ITEM_MESSAGE_MAX,
+  ITEM_PAGE_COUNT_MAX,
   MIN_REASON_CHARS,
   type Notifier,
   type NoticePolicy,
@@ -53,6 +58,8 @@ import {
   fundVetoDm,
   type HealthAlerter,
   type Headroom,
+  needsActionDm,
+  safeLinks,
   sealedHint,
   vendorLabel,
   gateTimezone,
@@ -207,6 +214,11 @@ function hasControlChars(v: unknown, depth = 0): boolean {
   return false;
 }
 
+/** An agent-supplied URL field: https, ≤ 2000 chars, no whitespace, no userinfo (`@`). */
+function isHttpsField(v: unknown): v is string {
+  return typeof v === "string" && v.length <= 2000 && /^https:\/\/[^\s@]+$/.test(v);
+}
+
 export function validateRequest(
   x: unknown,
   minReasonChars: number = MIN_REASON_CHARS,
@@ -257,11 +269,45 @@ export function validateRequest(
     if (i.title !== undefined && (typeof i.title !== "string" || i.title.length > 300)) {
       throw new ValidationError("item.title invalid");
     }
-    if (i.url !== undefined && (typeof i.url !== "string" || i.url.length > 2000 || !/^https:\/\/[^\s@]+$/.test(i.url))) {
+    if (i.url !== undefined && !isHttpsField(i.url)) {
       throw new ValidationError("item.url must be https");
     }
     if (i.maxUnitCents !== undefined && (!Number.isSafeInteger(i.maxUnitCents) || (i.maxUnitCents as number) < 0)) {
       throw new ValidationError("item.maxUnitCents invalid");
+    }
+    if (i.message !== undefined && (typeof i.message !== "string" || !i.message.trim() || i.message.length > ITEM_MESSAGE_MAX)) {
+      throw new ValidationError(`item.message invalid (1-${ITEM_MESSAGE_MAX} chars)`);
+    }
+    let files: Item["files"];
+    if (i.files !== undefined) {
+      if (!i.files || typeof i.files !== "object" || Array.isArray(i.files)) throw new ValidationError("item.files invalid");
+      const f = i.files as Record<string, unknown>;
+      if (Object.keys(f).some((k) => k !== "interior" && k !== "cover")) throw new ValidationError("item.files: only interior, cover");
+      files = {};
+      for (const k of ["interior", "cover"] as const) {
+        if (f[k] === undefined) continue;
+        if (!isHttpsField(f[k])) throw new ValidationError(`item.files.${k} must be https`);
+        files[k] = f[k] as string;
+      }
+    }
+    if (
+      i.pageCount !== undefined &&
+      (!Number.isSafeInteger(i.pageCount) || (i.pageCount as number) < 1 || (i.pageCount as number) > ITEM_PAGE_COUNT_MAX)
+    ) {
+      throw new ValidationError(`item.pageCount invalid (1-${ITEM_PAGE_COUNT_MAX})`);
+    }
+    if (i.sizing !== undefined && (typeof i.sizing !== "string" || !/^[A-Za-z]{1,40}$/.test(i.sizing))) {
+      throw new ValidationError("item.sizing invalid");
+    }
+    if (i.attributes !== undefined) {
+      const a = i.attributes;
+      const ok = !!a && typeof a === "object" && !Array.isArray(a) &&
+        Object.keys(a).length <= ITEM_ATTRIBUTES_MAX &&
+        Object.entries(a).every(([k, v]) => /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(k) && typeof v === "string" && v.length <= 80);
+      if (!ok) throw new ValidationError(`item.attributes invalid (≤ ${ITEM_ATTRIBUTES_MAX} keys, string values ≤ 80 chars)`);
+    }
+    if (i.aoi !== undefined && (typeof i.aoi !== "string" || !i.aoi.trim() || i.aoi.length > ITEM_AOI_MAX)) {
+      throw new ValidationError(`item.aoi invalid (1-${ITEM_AOI_MAX} chars of WKT)`);
     }
     return {
       sku: i.sku,
@@ -269,6 +315,12 @@ export function validateRequest(
       ...(i.title !== undefined ? { title: i.title as string } : {}),
       ...(i.url !== undefined ? { url: i.url as string } : {}),
       ...(i.maxUnitCents !== undefined ? { maxUnitCents: i.maxUnitCents as number } : {}),
+      ...(i.message !== undefined ? { message: i.message as string } : {}),
+      ...(files !== undefined ? { files } : {}),
+      ...(i.pageCount !== undefined ? { pageCount: i.pageCount as number } : {}),
+      ...(i.sizing !== undefined ? { sizing: i.sizing as string } : {}),
+      ...(i.attributes !== undefined ? { attributes: { ...(i.attributes as Record<string, string>) } } : {}),
+      ...(i.aoi !== undefined ? { aoi: i.aoi as string } : {}),
     };
   });
   let hint: string | undefined;
@@ -369,6 +421,30 @@ function quoteProblem(q: Quote | undefined): string | undefined {
 
 function maxReach(a: Reach, b: Reach): Reach {
   return REACH_RANK[a] >= REACH_RANK[b] ? a : b;
+}
+
+/** Most delivery links kept on a row. */
+const MAX_ROW_LINKS = 5;
+
+/**
+ * The two things the gate reads from a vendor payload (Order.raw on place(), status().raw on each
+ * poll): `links` (sanitized, merged with the row's, deduped) and `blocked` (a short code: the order
+ * waits on the owner at the vendor). Returns only the fields that CHANGE, so an unchanged poll
+ * writes nothing. The raw payload itself is never stored (it can carry vendor URLs with keys).
+ */
+export function vendorSignals(
+  raw: unknown,
+  row: Pick<GateRow, "links" | "needsAction">,
+): Partial<Pick<GateRow, "links" | "needsAction">> {
+  const out: Partial<Pick<GateRow, "links" | "needsAction">> = {};
+  const fresh = safeLinks(raw, MAX_ROW_LINKS);
+  const have = row.links ?? [];
+  const merged = [...have, ...fresh.filter((l) => !have.includes(l))].slice(0, MAX_ROW_LINKS);
+  if (merged.length !== have.length) out.links = merged;
+  const blocked = raw && typeof raw === "object" ? (raw as { blocked?: unknown }).blocked : undefined;
+  const code = typeof blocked === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(blocked) ? blocked : undefined;
+  if (code !== row.needsAction) out.needsAction = code; // cleared once the vendor stops reporting it
+  return out;
 }
 
 /**
@@ -789,14 +865,17 @@ export class Orchestrator {
       else if (out === "denied") rep.denied++;
     });
 
-    // 7. poll vendor status
+    // 7. poll vendor status (delivery links and vendor-side blocks ride along in status().raw)
     await each(await ledger.listByState("placed"), async (r) => {
       const adapter = this.d.adapters[r.vendor];
       if (!adapter || !r.vendorOrderId) return;
+      await this.sendNeedsActionDm(r, now); // a block reported by place() this very tick
       const s = await adapter.status(r.vendorOrderId);
-      if (s.state === "delivered") await this.move(r, "delivered");
+      const sig = vendorSignals(s.raw, r);
+      if (s.state === "delivered") await this.move(r, "delivered", sig);
       else if (s.state === "cancelled") await this.move(r, "cancelled", {}, "vendor_cancelled");
       else if (s.state === "failed") await this.move(r, "cancelled", {}, "vendor_failed");
+      else if (Object.keys(sig).length) await this.sendNeedsActionDm(await ledger.updateRequest(r.id, sig), now);
     });
 
     // 8. close delivered. Joy, silent and sealed purchases wait for THE REVEAL (the why-note DM);
@@ -817,6 +896,30 @@ export class Orchestrator {
       }
     });
     return rep;
+  }
+
+  /**
+   * ONE "<label> order needs you: <hint>" DM per request, when an adapter reports the order blocked
+   * on the vendor side (Prodigi RequiresPaymentAuthorisation, ...). The row stays `placed` and
+   * keeps counting; it is not outcome_unknown (the order is known, and STOP would halt every
+   * vendor). Rate limit: needsActionDmAt is set on the first delivered DM and never cleared, so a
+   * request is DMed at most once; a failed send (or quiet hours) retries on the next tick.
+   */
+  private async sendNeedsActionDm(row: GateRow, now: Date): Promise<void> {
+    if (!row.needsAction || row.needsActionDmAt || row.state !== "placed") return;
+    if (this.quiet(now)) return;
+    let res;
+    try {
+      res = await this.d.notifier.send(needsActionDm(row));
+    } catch (err) {
+      res = { ok: false, error: err instanceof Error ? err.name : "send_error" };
+    }
+    if (res.ok && res.messageId) {
+      await this.d.ledger.updateRequest(row.id, { needsActionDmAt: now.toISOString() });
+      this.log("needs_action_dm", { id: row.id, vendor: row.vendor, code: row.needsAction });
+    } else {
+      this.log("needs_action_dm_failed", { id: row.id, error: (res.error ?? "no_message_id").slice(0, 80) });
+    }
   }
 
   private async pullVerdicts(now: Date): Promise<number> {
@@ -937,6 +1040,9 @@ export class Orchestrator {
     if (q2.totalCents > row.maxTotalCents) return await deny(["over_agent_max"]);
 
     const adapterReach = adapter.reachFor(req);
+    // The most this order may ever cost. Stored on the row at placing (before the vendor call, so an
+    // outcome_unknown row carries it too): reconcile STOPs only on a charge above it.
+    const hardCap = Math.min(boundCents, row.maxTotalCents);
     // Re-decide and enter `placing` under the money lock (same lock as intake). The row's own
     // in-flight amount and fund hold are excluded, or every approved ask would fail its own window.
     const gate = await this.withMoneyLock(async () => {
@@ -963,13 +1069,14 @@ export class Orchestrator {
       if (silent && !noticeFor({ ...pr, effectiveReach: eff }, q2.totalCents, row.budget, this.notice).silent) {
         return { deny: ["policy_changed", "now_needs_dm"] };
       }
-      return { placing: await this.move(cur, "placing", { quote: q2 }, "redecide_ok", { redecide: pr }) };
+      return {
+        placing: await this.move(cur, "placing", { quote: q2, hardCapCents: hardCap }, "redecide_ok", { redecide: pr }),
+      };
     });
     if ("skip" in gate) return "skipped";
     if (gate.deny) return await deny(gate.deny);
     const placing = gate.placing!;
 
-    const hardCap = Math.min(boundCents, row.maxTotalCents);
     let order;
     try {
       order = await adapter.place(req, q2, hardCap, row.idempotencyKey);
@@ -988,7 +1095,11 @@ export class Orchestrator {
       await this.stop("place_outcome_unknown");
       return "failed";
     }
-    await this.move(placing, "placed", { vendorOrderId: order.vendorOrderId, finalCents: order.chargedCents });
+    await this.move(placing, "placed", {
+      vendorOrderId: order.vendorOrderId,
+      finalCents: order.chargedCents,
+      ...vendorSignals(order.raw, placing),
+    });
     if (row.tier === "fund_auto") {
       await ledger.addFundEntry({ kind: "release", cents: q2.totalCents, requestId: row.id }, now);
       await ledger.addFundEntry({ kind: "spend", cents: -order.chargedCents, requestId: row.id }, now);

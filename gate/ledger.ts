@@ -101,6 +101,10 @@ function rowToRequest(r: Row): RequestRow {
     ...(r.silent === null || r.silent === undefined ? {} : { silent: Number(r.silent) === 1 }),
     ...(r.sealed === null || r.sealed === undefined ? {} : { sealed: Number(r.sealed) === 1 }),
     rating: num(r.rating),
+    ...(r.hard_cap_cents == null ? {} : { hardCapCents: Number(r.hard_cap_cents) }),
+    ...(r.links_json == null ? {} : { links: JSON.parse(String(r.links_json)) as string[] }),
+    ...(r.needs_action == null ? {} : { needsAction: String(r.needs_action) }),
+    ...(r.needs_action_dm_at == null ? {} : { needsActionDmAt: String(r.needs_action_dm_at) }),
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
   };
@@ -230,12 +234,13 @@ export function importOrder(db: Db, o: ImportOrder, now: Date = new Date()): { r
       `INSERT INTO requests (id, idempotency_key, payload_hash, requester, task_id, vendor, budget,
          reach_declared, reach_effective, items_json, reason, max_total_cents,
          quote_subtotal_cents, quote_tax_cents, quote_shipping_cents, quote_total_cents, quote_currency, quoted_at,
-         final_cents, tier, decision, reasons_json, state, approver, vendor_order_id, dm_attempts, created_at, updated_at)
+         final_cents, tier, decision, reasons_json, state, approver, vendor_order_id, dm_attempts, hard_cap_cents,
+         created_at, updated_at)
        VALUES (?, ?, ?, 'manual-import', 'import', ?, 'general', 'self', 'self', ?, ?, ?,
-         ?, 0, 0, ?, 'USD', ?, ?, 'auto', 'auto', ?, 'placed', 'owner', ?, 0, ?, ?)`,
+         ?, 0, 0, ?, 'USD', ?, ?, 'auto', 'auto', ?, 'placed', 'owner', ?, 0, ?, ?, ?)`,
     ).run(
       id, key, payload, o.vendor, JSON.stringify(items), o.note, o.cents,
-      o.cents, o.cents, at, o.cents, JSON.stringify(["manual_import"]), o.vendorOrderId, at, at,
+      o.cents, o.cents, at, o.cents, JSON.stringify(["manual_import"]), o.vendorOrderId, o.cents, at, at,
     );
     db.prepare(
       "INSERT INTO events (request_id, from_state, to_state, note, at) VALUES (?, NULL, 'placed', 'manual_import', ?)",
@@ -294,6 +299,10 @@ export type RequestPatch = Partial<
     | "silent"
     | "sealed"
     | "rating"
+    | "hardCapCents"
+    | "links"
+    | "needsAction"
+    | "needsActionDmAt"
   >
 >;
 
@@ -316,6 +325,10 @@ function patchColumns(p: RequestPatch): [string, SqlVal][] {
   set("silent", "silent", () => (p.silent ? 1 : 0));
   set("sealed", "sealed", () => (p.sealed ? 1 : 0));
   set("rating", "rating", () => p.rating!);
+  set("hardCapCents", "hard_cap_cents", () => p.hardCapCents!);
+  set("links", "links_json", () => JSON.stringify(p.links));
+  set("needsAction", "needs_action", () => p.needsAction!);
+  set("needsActionDmAt", "needs_action_dm_at", () => p.needsActionDmAt!);
   if ("quote" in p) {
     const q = p.quote;
     cols.push(
@@ -622,19 +635,46 @@ export function deleteSetting(db: Db, key: string): void {
 }
 
 // ── Reconcile ─────────────────────────────────────────────────────────────
-/** Orders this vendor placed for us (any row with a vendor order id) created at or after `sinceISO`. */
+/**
+ * Orders this vendor placed for us (any row with a vendor order id) created at or after `sinceISO`,
+ * with the amount the ledger counts and the hard cap. Rows placed before hard_cap_cents existed
+ * fall back to max_total_cents: the gate's cap was min(bound quote, max_total_cents), so it never
+ * authorized more than that.
+ */
 export function listVendorOrders(
   db: Db,
   vendor: string,
   sinceISO: string,
-): { vendorOrderId: string; chargedCents: number }[] {
+): { vendorOrderId: string; chargedCents: number; hardCapCents: number; requestId: string }[] {
   return (db.prepare(
-    `SELECT vendor_order_id, COALESCE(final_cents, quote_total_cents, 0) AS c FROM requests
+    `SELECT id, vendor_order_id, COALESCE(final_cents, quote_total_cents, 0) AS c,
+            COALESCE(hard_cap_cents, max_total_cents) AS cap FROM requests
      WHERE vendor = ? AND vendor_order_id IS NOT NULL AND created_at >= ?`,
   ).all(vendor, sinceISO) as Row[]).map((r) => ({
     vendorOrderId: String(r.vendor_order_id),
     chargedCents: Number(r.c),
+    hardCapCents: Number(r.cap),
+    requestId: String(r.id),
   }));
+}
+
+/**
+ * Reconcile saw the real charge for an order (at or under its hard cap): set final_cents to it and
+ * log an event (same state in and out, note `reconcile_final:<from>-><to>`). No state change.
+ */
+export function adjustFinalCents(db: Db, requestId: string, cents: number, now = new Date()): void {
+  if (!Number.isSafeInteger(cents) || cents < 0) throw new Error("final cents must be a non-negative integer");
+  tx(db, () => {
+    const cur = db.prepare("SELECT state, COALESCE(final_cents, quote_total_cents, 0) AS c FROM requests WHERE id = ?")
+      .get(requestId) as Row | undefined;
+    if (!cur) throw new Error(`request ${requestId} not found`);
+    if (Number(cur.c) === cents) return;
+    const at = nowISO(now);
+    db.prepare("UPDATE requests SET final_cents = ?, updated_at = ? WHERE id = ?").run(cents, at, requestId);
+    db.prepare(
+      "INSERT INTO events (request_id, from_state, to_state, note, at) VALUES (?, ?, ?, ?, ?)",
+    ).run(requestId, cur.state, cur.state, `reconcile_final:${cur.c}->${cents}`, at);
+  });
 }
 
 export interface ChargeRow {

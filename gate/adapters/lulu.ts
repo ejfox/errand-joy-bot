@@ -101,35 +101,28 @@ const POD_PACKAGE_RE = /^[0-9A-Z]{4}X[0-9A-Z]{4}(\.[0-9A-Z]+){5}$|^[0-9A-Z]{27}$
 const PHONE_RE = /^\+?[\d\s\-.\/()]{8,20}$/;
 
 /**
- * Item encoding (types.ts has no file fields yet):
- *   sku   = `<pod_package_id>/<page_count>`, e.g. `0550X0850.FC.STD.SS.080CW444.GXX/16`
- *   url   = the interior PDF, with the cover PDF in the fragment:
- *           `https://files.example/zine-42/interior.pdf#cover=https://files.example/zine-42/cover.pdf`
- *           (the fragment value may be percent-encoded; it is stripped before the interior URL is sent)
- *   title = the line-item title (defaults to "Untitled"), qty = copies (1-100)
+ * Item fields:
+ *   sku            = the pod_package_id, e.g. `0550X0850.FC.STD.SS.080CW444.GXX`
+ *   pageCount      = interior pages (2-1200)
+ *   files.interior = the interior PDF (https)
+ *   files.cover    = the cover PDF (https)
+ *   title          = the line-item title (defaults to "Untitled"), qty = copies (1-100)
  * Anything malformed refuses before the network.
  */
 export function luluLine(item: Item): LuluLine {
-  const m = /^([0-9A-Z.]{20,40})\/(\d{1,4})$/.exec(item.sku);
-  if (!m || !POD_PACKAGE_RE.test(m[1])) throw new GuardRefused("lulu_bad_sku");
-  const pageCount = Number(m[2]);
-  if (pageCount < 2 || pageCount > 1200) throw new GuardRefused("lulu_bad_page_count");
+  if (!POD_PACKAGE_RE.test(item.sku)) throw new GuardRefused("lulu_bad_sku");
+  const pageCount = item.pageCount;
+  if (pageCount === undefined) throw new GuardRefused("lulu_page_count_missing");
+  if (!Number.isSafeInteger(pageCount) || pageCount < 2 || pageCount > 1200) throw new GuardRefused("lulu_bad_page_count");
   if (!Number.isSafeInteger(item.qty) || item.qty < 1 || item.qty > 100) throw new GuardRefused("lulu_bad_qty");
-  if (!item.url) throw new GuardRefused("lulu_interior_url_missing");
-  const hash = item.url.indexOf("#");
-  const interiorUrl = hash >= 0 ? item.url.slice(0, hash) : item.url;
-  const frag = hash >= 0 ? item.url.slice(hash + 1) : "";
-  if (!frag.startsWith("cover=")) throw new GuardRefused("lulu_cover_url_missing");
-  let coverUrl: string;
-  try {
-    coverUrl = decodeURIComponent(frag.slice("cover=".length));
-  } catch {
-    throw new GuardRefused("lulu_cover_url_invalid");
-  }
+  const interiorUrl = item.files?.interior;
+  const coverUrl = item.files?.cover;
+  if (!interiorUrl) throw new GuardRefused("lulu_interior_url_missing");
+  if (!coverUrl) throw new GuardRefused("lulu_cover_url_missing");
   if (!isHttpsUrl(interiorUrl)) throw new GuardRefused("lulu_interior_url_invalid");
-  if (!isHttpsUrl(coverUrl) || coverUrl.includes("#")) throw new GuardRefused("lulu_cover_url_invalid");
+  if (!isHttpsUrl(coverUrl)) throw new GuardRefused("lulu_cover_url_invalid");
   const title = (item.title ?? "").trim().slice(0, 255) || "Untitled";
-  return { podPackageId: m[1], pageCount, quantity: item.qty, interiorUrl, coverUrl, title };
+  return { podPackageId: item.sku, pageCount, quantity: item.qty, interiorUrl, coverUrl, title };
 }
 
 function lines(req: PurchaseRequest): LuluLine[] {
@@ -349,7 +342,11 @@ export class LuluAdapter implements VendorAdapter {
     return {
       state: mapLuluStatus(job.status?.name),
       tracking: li?.tracking_id || li?.tracking_urls?.[0] || undefined,
-      raw: { status: job.status?.name },
+      // Tracking pages for the delivery why-note (the gate keeps https ones only).
+      raw: {
+        status: job.status?.name,
+        links: (job.line_items ?? []).flatMap((l) => l.tracking_urls ?? []).filter((u) => typeof u === "string"),
+      },
     };
   }
 

@@ -47,6 +47,13 @@ CREATE TABLE IF NOT EXISTS requests (
   silent               INTEGER CHECK (silent IS NULL OR silent IN (0,1)),
   sealed               INTEGER CHECK (sealed IS NULL OR sealed IN (0,1)),
   rating               INTEGER,
+  -- the most the gate authorized for this order (set at placing); reconcile STOPs only above it
+  hard_cap_cents       INTEGER CHECK (hard_cap_cents IS NULL OR hard_cap_cents >= 0),
+  -- https delivery links an adapter reported (certificates, downloads, tracking); sanitized JSON array
+  links_json           TEXT,
+  -- vendor-side block the owner must clear (e.g. Prodigi RequiresPaymentAuthorisation); DM sent once
+  needs_action         TEXT,
+  needs_action_dm_at   TEXT,
   created_at           TEXT NOT NULL,
   updated_at           TEXT NOT NULL
 );

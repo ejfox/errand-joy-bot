@@ -35,6 +35,7 @@ import {
 const PATCH_KEYS = [
   "reachEffective", "quote", "finalCents", "tier", "decision", "reasons", "approver", "vendorOrderId",
   "dmMessageId", "dmAttempts", "dmLastError", "whyNote", "silent", "sealed", "rating",
+  "hardCapCents", "links", "needsAction", "needsActionDmAt",
 ] as const satisfies readonly (keyof L.RequestPatch)[];
 
 /** Keep only the columns the ledger lets callers change; state/id/hash/etc. are never patchable. */
@@ -299,14 +300,19 @@ export function buildDeps(config: GateConfig, opts: BuildOptions): GateDeps {
       adapters: Object.values(adapters),
       listOrders: (vendor, s) => L.listVendorOrders(db, vendor, s),
       recordCharge: (c) => L.recordCharge(db, c, clock.now()),
+      updateFinal: (a) => {
+        if (!a.requestId) throw new Error("final adjustment without a request id");
+        L.adjustFinalCents(db, a.requestId, a.toCents, clock.now());
+        opts.log?.("reconcile_final", { id: a.requestId, vendor: a.vendor, from: a.fromCents, to: a.toCents, cap: a.hardCapCents });
+      },
       recordRun: (r) =>
         L.recordReconcileRun(db, {
           startedAt: started,
           finishedAt: clock.now().toISOString(),
           charges: r.charges,
-          unmatched: r.unmatched + r.mismatched,
+          unmatched: r.unmatched + r.overCap, // the "bad" count; adjusted finals are not bad
           ok: r.ok === 1,
-          note: r.error?.slice(0, 500),
+          note: (r.error ?? (r.adjusted ? `adjusted:${r.adjusted}` : undefined))?.slice(0, 500),
         }),
       setStop: (on) => ledger.setStop(on, "reconcile_mismatch"),
       notifier,

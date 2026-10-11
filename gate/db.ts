@@ -31,6 +31,12 @@ export function openDb(path: string): Db {
     ["hint", "TEXT"],
     ["silent", "INTEGER CHECK (silent IS NULL OR silent IN (0,1))"],
     ["sealed", "INTEGER CHECK (sealed IS NULL OR sealed IN (0,1))"],
+    // ...nor the hard cap, delivery links and needs-action columns. Legacy rows keep NULL there
+    // (reconcile falls back to max_total_cents, which the gate never authorized above).
+    ["hard_cap_cents", "INTEGER CHECK (hard_cap_cents IS NULL OR hard_cap_cents >= 0)"],
+    ["links_json", "TEXT"],
+    ["needs_action", "TEXT"],
+    ["needs_action_dm_at", "TEXT"],
   ];
   for (const [c, type] of add) {
     if (!rcols.some((x) => x.name === c)) db.exec(`ALTER TABLE requests ADD COLUMN ${c} ${type}`);

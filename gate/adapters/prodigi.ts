@@ -41,9 +41,9 @@ const TIMEOUT_MS = 30_000;
 const MAX_ITEMS = 10;
 
 /**
- * Per-item print options. `Item` (types.ts) has no such fields yet and gate intake strips unknown
- * item keys, so through the gate today these are always absent and the defaults apply
- * (sizing fillPrintArea, no attributes). Adapter-level callers and tests can set them.
+ * Per-item print options, from the gate Item's `sizing` and `attributes` (intake bounds them; this
+ * adapter narrows `sizing` to Prodigi's enum and re-checks attributes). Defaults: sizing
+ * fillPrintArea, no attributes. `url` is the image asset.
  */
 export interface ProdigiItem extends Item {
   sizing?: typeof PRODIGI_SIZINGS[number];
@@ -364,6 +364,8 @@ export class ProdigiAdapter implements VendorAdapter {
       tracking,
       raw: {
         stage: o.status?.stage,
+        // Tracking pages for the delivery why-note (the gate keeps https ones only).
+        links: (o.shipments ?? []).map((s) => s.tracking?.url).filter((u): u is string => typeof u === "string"),
         ...(block ? { blocked: PAYMENT_AUTH_CODE, authorisationUrl: block.authorisationUrl } : {}),
       },
     };

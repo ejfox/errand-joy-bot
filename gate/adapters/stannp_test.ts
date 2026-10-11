@@ -70,7 +70,13 @@ function req(over: Partial<PurchaseRequest> = {}): PurchaseRequest {
     requester: "test-agent",
     taskId: "example-task",
     vendor: "stannp",
-    items: [{ sku: "postcard-4x6", qty: 1, url: "https://files.example/test-render.png", title: "Example message from the robot" }],
+    items: [{
+      sku: "postcard-4x6",
+      qty: 1,
+      url: "https://files.example/test-render.png",
+      title: "Example postcard",
+      message: "Example message from the robot",
+    }],
     reason: "x".repeat(60),
     reach: "self",
     maxTotalCents: 500,
@@ -116,6 +122,24 @@ Deno.test("quote: postcards/create with test=true; cost is the total; Basic auth
   assertEquals(c.form!["recipient[state]"], "NY");
   assertEquals(c.form!["recipient[country]"], "US");
   assertEquals(c.form!.idempotency_key, undefined);
+});
+
+Deno.test("quote: the title is a label, never printed; no message → no message field", async () => {
+  const { calls, fetchImpl } = stub([[isTestCreate, TEST_CREATE]]);
+  await adapter(fetchImpl).quote(req({
+    items: [{ sku: "postcard-4x6", qty: 1, url: "https://files.example/test-render.png", title: "Example postcard" }],
+  }));
+  assertEquals(calls[0].form!.message, undefined);
+});
+
+Deno.test("a letter with a message is refused before the network (it would be silently dropped)", async () => {
+  const { calls, fetchImpl } = stub([[isTestCreate, TEST_CREATE]]);
+  await assertRejects(
+    () => adapter(fetchImpl).quote(req({ items: [{ sku: "letter", qty: 1, url: "https://files.example/l.pdf", message: "hi" }] })),
+    GuardRefused,
+    "stannp_letter_has_no_message",
+  );
+  assertEquals(calls.length, 0);
 });
 
 Deno.test("quote: a letter uses letters/create with the PDF as `file`", async () => {
@@ -388,7 +412,7 @@ Deno.test({
     const a = new StannpAdapter({ apiKey, baseUrl: Deno.env.get("STANNP_BASE_URL"), ownerShipTo, testMode: true });
     const r = req({
       idempotencyKey: crypto.randomUUID(),
-      items: [{ sku: "postcard-4x6", qty: 1, url: "https://www.stannp.com/assets/samples/a6-postcard-front.webp", title: "errand-joy-bot live test" }],
+      items: [{ sku: "postcard-4x6", qty: 1, url: "https://www.stannp.com/assets/samples/a6-postcard-front.webp", message: "errand-joy-bot live test" }],
     });
     const q = await a.quote(r);
     console.log(`live quote total=${q.totalCents}`);

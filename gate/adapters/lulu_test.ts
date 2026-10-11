@@ -95,7 +95,7 @@ function req(over: Partial<PurchaseRequest> = {}): PurchaseRequest {
     requester: "test-agent",
     taskId: "example-task",
     vendor: "lulu",
-    items: [{ sku: `${POD}/16`, qty: 1, url: `${INTERIOR}#cover=${COVER}`, title: "Example Zine" }],
+    items: [{ sku: POD, qty: 1, pageCount: 16, files: { interior: INTERIOR, cover: COVER }, title: "Example Zine" }],
     reason: "x".repeat(60),
     reach: "self",
     maxTotalCents: 4_000,
@@ -109,21 +109,25 @@ function quoteOf(totalCents: number): Quote {
 }
 
 // ── item encoding ──────────────────────────────────────────────────────────
-Deno.test("luluLine: sku = pod/pages, url = interior#cover=<url> (raw or percent-encoded)", () => {
+Deno.test("luluLine: sku = pod package id, pageCount, files.interior + files.cover", () => {
   const l = luluLine(req().items[0]);
   assertEquals(l, { podPackageId: POD, pageCount: 16, quantity: 1, interiorUrl: INTERIOR, coverUrl: COVER, title: "Example Zine" });
-  const enc = luluLine({ sku: "0600X0900BWSTDPB060UW444MXX/32", qty: 2, url: `${INTERIOR}#cover=${encodeURIComponent(COVER)}` });
-  assertEquals([enc.coverUrl, enc.pageCount, enc.title], [COVER, 32, "Untitled"]);
+  const files = { interior: INTERIOR, cover: COVER };
+  const other = luluLine({ sku: "0600X0900BWSTDPB060UW444MXX", qty: 2, pageCount: 32, files });
+  assertEquals([other.podPackageId, other.pageCount, other.title], ["0600X0900BWSTDPB060UW444MXX", 32, "Untitled"]);
   for (
     const [it, code] of [
-      [{ sku: POD, qty: 1, url: `${INTERIOR}#cover=${COVER}` }, "lulu_bad_sku"],
-      [{ sku: `not-a-pod-package-id-at-all/16`, qty: 1, url: `${INTERIOR}#cover=${COVER}` }, "lulu_bad_sku"],
-      [{ sku: `${POD}/1`, qty: 1, url: `${INTERIOR}#cover=${COVER}` }, "lulu_bad_page_count"],
-      [{ sku: `${POD}/16`, qty: 101, url: `${INTERIOR}#cover=${COVER}` }, "lulu_bad_qty"],
-      [{ sku: `${POD}/16`, qty: 1 }, "lulu_interior_url_missing"],
-      [{ sku: `${POD}/16`, qty: 1, url: INTERIOR }, "lulu_cover_url_missing"],
-      [{ sku: `${POD}/16`, qty: 1, url: `${INTERIOR}#cover=http://files.example/c.pdf` }, "lulu_cover_url_invalid"],
-      [{ sku: `${POD}/16`, qty: 1, url: `http://files.example/i.pdf#cover=${COVER}` }, "lulu_interior_url_invalid"],
+      [{ sku: `${POD}/16`, qty: 1, pageCount: 16, files }, "lulu_bad_sku"], // the old sku/pages encoding is gone
+      [{ sku: "not-a-pod-package-id-at-all", qty: 1, pageCount: 16, files }, "lulu_bad_sku"],
+      [{ sku: POD, qty: 1, files }, "lulu_page_count_missing"],
+      [{ sku: POD, qty: 1, pageCount: 1, files }, "lulu_bad_page_count"],
+      [{ sku: POD, qty: 1, pageCount: 1201, files }, "lulu_bad_page_count"],
+      [{ sku: POD, qty: 101, pageCount: 16, files }, "lulu_bad_qty"],
+      [{ sku: POD, qty: 1, pageCount: 16 }, "lulu_interior_url_missing"],
+      [{ sku: POD, qty: 1, pageCount: 16, url: `${INTERIOR}#cover=${COVER}` }, "lulu_interior_url_missing"],
+      [{ sku: POD, qty: 1, pageCount: 16, files: { interior: INTERIOR } }, "lulu_cover_url_missing"],
+      [{ sku: POD, qty: 1, pageCount: 16, files: { interior: INTERIOR, cover: "http://files.example/c.pdf" } }, "lulu_cover_url_invalid"],
+      [{ sku: POD, qty: 1, pageCount: 16, files: { interior: "http://files.example/i.pdf", cover: COVER } }, "lulu_interior_url_invalid"],
     ] as const
   ) {
     const e = assertThrows(() => luluLine(it), GuardRefused);
@@ -369,11 +373,14 @@ Deno.test({
     const r = req({
       idempotencyKey: crypto.randomUUID(),
       items: [{
-        sku: "0600X0900.BW.STD.PB.060UW444.MXX/32",
+        sku: "0600X0900.BW.STD.PB.060UW444.MXX",
         qty: 1,
+        pageCount: 32,
         title: "errand-joy-bot sandbox test",
-        url: "https://www.dropbox.com/s/r20orb8umqjzav9/lulu_trade_interior_template-32.pdf?dl=1&raw=1#cover=" +
-          encodeURIComponent("https://www.dropbox.com/s/7bv6mg2tj0h3l0r/lulu_trade_perfect_template.pdf?dl=1&raw=1"),
+        files: {
+          interior: "https://www.dropbox.com/s/r20orb8umqjzav9/lulu_trade_interior_template-32.pdf?dl=1&raw=1",
+          cover: "https://www.dropbox.com/s/7bv6mg2tj0h3l0r/lulu_trade_perfect_template.pdf?dl=1&raw=1",
+        },
       }],
     });
     const q = await a.quote(r);

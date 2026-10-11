@@ -300,6 +300,15 @@ function itemsLine(row: Pick<RequestRow, "items">): string {
 
 type DmRow = Pick<RequestRow, "requester" | "vendor" | "items" | "reason"> & { shipTo?: ShipTo };
 
+/**
+ * Text the vendor will PRINT (a postcard message) is shown in every unsealed DM: it may be mailed
+ * to someone else, so the owner reads it before approving. Never in sealed DMs.
+ */
+function messageLines(row: Pick<RequestRow, "items">): string[] {
+  const m = row.items.find((i) => i.message)?.message;
+  return m ? [`printed message: "${clean(m, 300)}"`] : [];
+}
+
 /** "ship to: Jane D., Springfield" for third-party addresses; nothing for the owner's own address. */
 function shipLine(row: DmRow): string[] {
   const s = row.shipTo;
@@ -314,10 +323,77 @@ function shipLine(row: DmRow): string[] {
 export const VENDOR_LABELS: Record<string, string> = {
   zinc: "Amazon via Zinc",
   mock: "the mock shop",
+  slant3d: "3D print (Slant 3D)",
+  stannp: "postcard (Stannp)",
+  lulu: "printed zine (Lulu)",
+  prodigi: "art print (Prodigi)",
+  mouser: "electronics (Mouser)",
+  treenation: "trees (Tree-Nation)",
+  skyfi: "satellite image (SkyFi)",
 };
 
 export function vendorLabel(vendor: string): string {
   return Object.hasOwn(VENDOR_LABELS, vendor) ? VENDOR_LABELS[vendor] : clean(vendor, 40);
+}
+
+/**
+ * Where the owner clears a vendor-side block (an order that exists but waits on them). Static text
+ * per vendor: the adapter's own action URL (which may carry a session or key) never reaches a DM.
+ */
+export const VENDOR_ACTION_HINTS: Record<string, string> = {
+  prodigi: "authorise the card payment in the Prodigi dashboard (dashboard.prodigi.com → Orders), or check the Privacy card",
+  lulu: "check the print job in the Lulu dashboard (developers.lulu.com → Print Jobs)",
+  slant3d: "check the order in the Slant 3D dashboard",
+  mouser: "check the order in My Mouser (order history)",
+  skyfi: "check the order in the SkyFi app (app.skyfi.com)",
+  zinc: "check the order in the Zinc dashboard (app.zinc.com)",
+};
+
+/** ONE DM per request: an order exists but is blocked on the vendor side until the owner acts. */
+export function needsActionDm(row: Pick<RequestRow, "vendor" | "needsAction">): string {
+  const hint = Object.hasOwn(VENDOR_ACTION_HINTS, row.vendor)
+    ? VENDOR_ACTION_HINTS[row.vendor]
+    : `check the order in the vendor dashboard (${clean(row.needsAction, 64)})`;
+  return `${vendorLabel(row.vendor)} order needs you: ${hint}`;
+}
+
+/** Query parameters that carry credentials. A link with any of them is never stored or DMed. */
+const SECRET_PARAMS = new Set(["apikey", "api_key", "key", "token", "access_token", "auth", "password", "secret"]);
+export const LINK_MAX_CHARS = 2000;
+
+/**
+ * A vendor-reported link, made safe to store and DM: https only, no userinfo, no whitespace or
+ * angle brackets, ≤ LINK_MAX_CHARS, and NO credential-carrying query parameter (apiKey, key,
+ * token, ...: the link is dropped, never "fixed", since a key could hide elsewhere in it too).
+ * Returns undefined for anything else.
+ */
+export function safeLink(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || raw.length > LINK_MAX_CHARS || !/^https:\/\/[^\s<>"`]+$/.test(raw)) return undefined;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (u.protocol !== "https:" || u.username || u.password) return undefined;
+  for (const k of u.searchParams.keys()) if (SECRET_PARAMS.has(k.toLowerCase())) return undefined;
+  // A key smuggled into the fragment as a query-ish string (#apiKey=...) counts too.
+  if (/(^|[#&?;])(apikey|api_key|key|token|access_token)=/i.test(u.hash)) return undefined;
+  return u.toString();
+}
+
+/** Safe links from a vendor payload's `links` field (deduped, at most `max`). */
+export function safeLinks(raw: unknown, max = 5): string[] {
+  const list = (raw && typeof raw === "object" && Array.isArray((raw as { links?: unknown }).links))
+    ? (raw as { links: unknown[] }).links
+    : [];
+  const out: string[] = [];
+  for (const l of list) {
+    const s = safeLink(l);
+    if (s && !out.includes(s)) out.push(s);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 /** The agent's teaser for a sealed DM, or the default. Never the item. */
@@ -359,6 +435,7 @@ export function approvalDm(
   return [
     `purchase-gate: ${clean(row.requester, 40)} wants ${fmtCents(q.totalCents)} from ${clean(row.vendor, 40)}`,
     `items: ${itemsLine(row)}`,
+    ...messageLines(row),
     ...shipLine(row),
     `why: ${clean(row.reason)}`,
     ...(h ? [`if approved: ${fmtCents(h.dayCents)} left today, ${fmtCents(h.monthCents)} this month`] : []),
@@ -381,6 +458,7 @@ export function vetoDm(
   return [
     `purchase-gate: buying ${fmtCents(q.totalCents)} from ${clean(row.vendor, 40)} in ${opts.windowMin ?? 10} min unless you veto`,
     `items: ${itemsLine(row)}`,
+    ...messageLines(row),
     ...shipLine(row),
     `why: ${clean(row.reason)}`,
     `veto: ${link(url)}`,
@@ -412,6 +490,7 @@ export function fundVetoDm(
   return [
     `purchase-gate: robot fund pays ${fmtCents(q.totalCents)} to ${clean(row.vendor, 40)} in ${fmtWindow(windowMin)} unless you veto`,
     `items: ${itemsLine(row)}`,
+    ...messageLines(row),
     `why: ${clean(row.reason)}`,
     `veto: ${link(url)}`,
   ].join("\n");
@@ -422,12 +501,17 @@ export function fundVetoDm(
  * why the robot picked it (whyNote, else reason) and the item link when there is one. The link was
  * validated as https at intake and is wrapped in <> (no preview); it carries no approval token.
  */
-export function deliveredWhyNoteDm(row: Pick<RequestRow, "items" | "whyNote" | "reason"> & { budget?: string }): string {
-  const url = row.items.find((i) => i.url)?.url;
+export function deliveredWhyNoteDm(
+  row: Pick<RequestRow, "items" | "whyNote" | "reason"> & { budget?: string; links?: string[] },
+): string {
+  const url = safeLink(row.items.find((i) => i.url)?.url);
+  // Delivery links from the vendor (certificates, downloads, tracking): re-checked here, max 3.
+  const delivery = (row.links ?? []).map(safeLink).filter((l): l is string => !!l && l !== url).slice(0, 3);
   return [
     `your robot's ${row.budget === "joy" ? "surprise" : "purchase"} arrived: ${itemsLine(row)}`,
     `why it picked this: ${clean(row.whyNote || row.reason, 280)}`,
-    ...(url && /^https:\/\/[^\s<>]+$/.test(url) ? [`link: ${link(url)}`] : []),
+    ...(url ? [`link: ${link(url)}`] : []),
+    ...delivery.map((l) => `delivery: ${link(l)}`),
   ].join("\n");
 }
 

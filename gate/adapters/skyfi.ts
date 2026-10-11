@@ -22,12 +22,14 @@
 //   tasking endpoints and refuses `tasking:` skus. Delivery stays `NONE` (SkyFi-hosted); bucket
 //   credentials are never accepted.
 //
-// Items (the gate's Item has no geometry field and skus are ≤ 128 chars):
-//   exactly one `archive:<archiveId>` (qty 1), plus at most one AOI item (qty 1):
-//     `aoi:POLYGON((lon lat, ...))`         a simple WKT polygon (only coarse ones fit in 128 chars)
+// Items:
+//   exactly one `archive:<archiveId>` (qty 1). Its optional `aoi` field is the area of interest as
+//   a simple WKT polygon, `POLYGON((lon lat, ...))` (≤ 10k chars, ≤ 500 vertices). Instead of `aoi`,
+//   at most one shorthand AOI item (qty 1) may follow:
 //     `point:<lat>,<lon>,<radiusKm>`        a square of side 2 × radius around the point
 //     `bbox:<minLon>,<minLat>,<maxLon>,<maxLat>`
-//   With no AOI item the archive's whole footprint is ordered (priced by validate like any other).
+//   With no AOI the archive's whole footprint is ordered (priced by validate like any other).
+//   (The old `aoi:<WKT>` sku is gone: skus are ≤ 128 chars, too short for a real polygon.)
 import { OWNER_HOME } from "../types.ts";
 import type { Charge, Order, PurchaseRequest, Quote, Reach, VendorAdapter } from "../types.ts";
 // Used only inside functions (registry.ts imports this module), so the import cycle is safe.
@@ -152,6 +154,7 @@ export function parseSkyFiItems(req: PurchaseRequest): SkyFiOrderSpec {
     const sku = it.sku.trim();
     const [prefix, ...rest] = sku.split(":");
     const value = rest.join(":");
+    if (it.aoi !== undefined && prefix !== "archive") throw new SkyFiError("skyfi_aoi_on_archive_item_only");
     switch (prefix) {
       case "tasking":
         throw new SkyFiError("skyfi_tasking_refused");
@@ -159,13 +162,15 @@ export function parseSkyFiItems(req: PurchaseRequest): SkyFiOrderSpec {
         if (archiveId !== undefined) throw new SkyFiError("skyfi_one_archive_only");
         if (!/^[A-Za-z0-9._-]{1,120}$/.test(value)) throw new SkyFiError("skyfi_bad_archive_id");
         archiveId = value;
+        if (it.aoi !== undefined) {
+          if (aoi !== undefined) throw new SkyFiError("skyfi_one_aoi_only");
+          aoi = parseWktPolygon(it.aoi);
+        }
         break;
-      case "aoi":
       case "point":
       case "bbox": {
         if (aoi !== undefined) throw new SkyFiError("skyfi_one_aoi_only");
-        if (prefix === "aoi") aoi = parseWktPolygon(value);
-        else {
+        {
           const n = value.split(",").map((s) => num(s.trim()));
           if (n.some((x) => !Number.isFinite(x))) throw new SkyFiError(`skyfi_bad_${prefix}`);
           if (prefix === "point") {

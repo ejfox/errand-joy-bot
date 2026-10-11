@@ -15,10 +15,67 @@ import {
   makeNotifier,
   NoopHealthAlerter,
   NtfyNotifier,
+  needsActionDm,
   quietHoursConfig,
+  safeLink,
   stopDm,
+  VENDOR_ACTION_HINTS,
+  VENDOR_LABELS,
+  vendorLabel,
   vetoDm,
 } from "./notify.ts";
+import { knownVendors } from "./adapters/registry.ts";
+
+Deno.test("every registered vendor has a sealed-DM label (a category, not a product)", () => {
+  for (const v of knownVendors()) assert(Object.hasOwn(VENDOR_LABELS, v), `no label for ${v}`);
+  assertEquals(vendorLabel("prodigi"), "art print (Prodigi)");
+  assertEquals(vendorLabel("skyfi"), "satellite image (SkyFi)");
+  assertEquals(vendorLabel("zinc"), "Amazon via Zinc");
+  assertEquals(vendorLabel("not-a-vendor<script>"), "not-a-vendorscript");
+});
+
+Deno.test("needsActionDm: '<label> order needs you: <hint>', static hint, no URL from the vendor", () => {
+  const dm = needsActionDm({ vendor: "prodigi", needsAction: "RequiresPaymentAuthorisation" });
+  assertEquals(dm, `art print (Prodigi) order needs you: ${VENDOR_ACTION_HINTS.prodigi}`);
+  const other = needsActionDm({ vendor: "fakeshop", needsAction: "https://evil.example/x" });
+  assert(other.startsWith("fakeshop order needs you: ") && !other.includes("://"), other);
+});
+
+Deno.test("safeLink: https only; links carrying apiKey/key/token are dropped, never DMed", () => {
+  assertEquals(safeLink("https://certs.example/tree/1"), "https://certs.example/tree/1");
+  assertEquals(safeLink("https://dl.example/f?id=3&format=tif"), "https://dl.example/f?id=3&format=tif");
+  for (
+    const bad of [
+      "http://certs.example/x",
+      "https://user:pw@certs.example/x",
+      "https://api.mouser.example/order?apiKey=abc",
+      "https://x.example/d?KEY=abc",
+      "https://x.example/d?token=abc",
+      "https://x.example/d?access_token=abc",
+      "https://x.example/d?api_key=abc",
+      "https://x.example/d#token=abc",
+      "https://x.example/a b",
+      "https://x.example/<x>",
+      "javascript:alert(1)",
+      "https://x.example/" + "a".repeat(2000),
+      42,
+      undefined,
+    ]
+  ) assertEquals(safeLink(bad), undefined, String(bad).slice(0, 60));
+});
+
+Deno.test("why-note DM: delivery links wrapped in <>, max 3, https only", () => {
+  const dm = deliveredWhyNoteDm({
+    items: [{ sku: "T1", qty: 5, title: "trees" }],
+    reason: "a forest for the hudson valley because the robot likes moss",
+    links: ["https://c.example/1", "https://c.example/2", "https://c.example/3", "https://c.example/4", "http://c.example/5"],
+  });
+  assertEquals(dm.split("\n").filter((l) => l.startsWith("delivery: ")), [
+    "delivery: <https://c.example/1>",
+    "delivery: <https://c.example/2>",
+    "delivery: <https://c.example/3>",
+  ]);
+});
 
 const NY = { start: 22 * 60, end: 7 * 60 + 30, tz: "America/New_York" };
 const row = {

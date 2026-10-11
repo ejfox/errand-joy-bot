@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { openDb } from "./db.ts";
 import {
+  adjustFinalCents,
   consumeApproval,
   createRequest,
   getRequest,
@@ -10,6 +11,7 @@ import {
   isStopped,
   listEvents,
   listRequests,
+  listVendorOrders,
   recordDecision,
   recordQuote,
   recordRating,
@@ -250,6 +252,30 @@ Deno.test("openDb adds the lookup-id columns to a ledger from before fragment li
   const db2 = openDb(path);
   const cols = (db2.prepare("PRAGMA table_info(approvals)").all() as Array<{ name: string }>).map((c) => c.name);
   assert.ok(cols.includes("deny_lookup_id") && cols.includes("approve_lookup_id"));
+  db2.close();
+  await Deno.remove(path);
+});
+
+Deno.test("a ledger from before hard caps / links / needs-action gets the columns; legacy rows reconcile on max_total_cents", async () => {
+  const { db, path } = await tmpDb();
+  const row = createRequest(db, req("legacy-1", { maxTotalCents: 2500 }), await hashPayload(req("legacy-1", { maxTotalCents: 2500 })));
+  db.prepare("UPDATE requests SET vendor_order_id = 'ord-old', final_cents = 2000 WHERE id = ?").run(row.id);
+  // Make it look like the live ledger before this change (nothing else is touched).
+  for (const c of ["hard_cap_cents", "links_json", "needs_action", "needs_action_dm_at"]) {
+    db.exec(`ALTER TABLE requests DROP COLUMN ${c}`);
+  }
+  db.close();
+  const db2 = openDb(path);
+  const cols = (db2.prepare("PRAGMA table_info(requests)").all() as Array<{ name: string }>).map((c) => c.name);
+  for (const c of ["hard_cap_cents", "links_json", "needs_action", "needs_action_dm_at"]) assert.ok(cols.includes(c), c);
+  const r = getRequest(db2, row.id)!;
+  assert.deepEqual([r.finalCents, r.hardCapCents, r.links, r.needsAction], [2000, undefined, undefined, undefined]);
+  assert.deepEqual(listVendorOrders(db2, "mouser", "2000-01-01T00:00:00.000Z"), [
+    { vendorOrderId: "ord-old", chargedCents: 2000, hardCapCents: 2500, requestId: row.id },
+  ]);
+  adjustFinalCents(db2, row.id, 1950);
+  assert.equal(getRequest(db2, row.id)!.finalCents, 1950);
+  assert.equal(listEvents(db2, row.id).at(-1)!.note, "reconcile_final:2000->1950");
   db2.close();
   await Deno.remove(path);
 });

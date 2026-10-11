@@ -294,7 +294,7 @@ export class Slant3dAdapter implements VendorAdapter {
    * within the hard cap and holds exactly the quoted files. A draft that is already processed is
    * returned as-is (a retry of our own earlier call; each draft comes from one quote).
    */
-  async place(req: PurchaseRequest, q: Quote, hardCapCents: number, _idempotencyKey: string): Promise<Order> {
+  async place(_req: PurchaseRequest, q: Quote, hardCapCents: number, _idempotencyKey: string): Promise<Order> {
     if (this.paused) throw new GuardRefused("vendor_paused");
     if (!this.apiKey) throw new GuardRefused("slant3d_api_key_missing");
     const draftId = q.vendorRef;

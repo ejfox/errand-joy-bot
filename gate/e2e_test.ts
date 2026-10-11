@@ -345,8 +345,45 @@ Deno.test("import-order: a hand-placed order counts in the windows and reconcile
   assertEquals((await post({ ...body, vendorOrderId: "has space" })).status, 400);
   assertEquals(h.ledger.windowsFor("mock", "general", h.clock.now())["global/day"].spentCents, 2600);
   const run = await h.reconcile();
-  assertEquals([run.ok, run.unmatched, run.mismatched], [1, 0, 0]);
+  assertEquals([run.ok, run.unmatched, run.overCap], [1, 0, 0]);
   assertEquals(h.ledger.isStopped(), false);
+  assertEquals(h.ledger.getRequest(row.id)!.hardCapCents, 2600);
+});
+
+Deno.test("reconcile on the real ledger: hard cap stored at placing; under-cap charge → finalCents, over-cap → STOP", async () => {
+  const h = await harness();
+  const row = await h.orch.submit(req("S20", { maxTotalCents: 2500 })); // silent tier: no DM
+  assertEquals(row.state, "approved");
+  await h.orch.tick();
+  const placed = h.ledger.getRequest(row.id)!;
+  assertEquals([placed.state, placed.finalCents, placed.hardCapCents], ["placed", 2000, 2000]);
+
+  // The vendor's real charge comes in under the cap (a hold refunded down): no STOP, ledger follows.
+  const real = await h.mock.listCharges("2000-01-01T00:00:00Z");
+  assertEquals(real.length, 1);
+  h.mock.listCharges = () => Promise.resolve([{ ...real[0], amountCents: 1890 }]);
+  let run = await h.reconcile();
+  assertEquals([run.ok, run.unmatched, run.overCap, run.adjusted], [1, 0, 0, 1]);
+  assertEquals(h.ledger.isStopped(), false);
+  assertEquals(h.ledger.getRequest(row.id)!.finalCents, 1890);
+  assertEquals(h.ledger.windowsFor("mock", "general", h.clock.now())["global/day"].spentCents, 1890, "windows count finalCents");
+  const ev = h.db.prepare("SELECT from_state, to_state, note FROM events WHERE request_id = ? ORDER BY id DESC LIMIT 1")
+    .get(row.id) as { from_state: string; to_state: string; note: string };
+  assertEquals([ev.from_state, ev.to_state, ev.note], ["placed", "placed", "reconcile_final:2000->1890"]);
+  const rr = h.db.prepare("SELECT ok, unmatched, note FROM reconcile_runs ORDER BY id DESC LIMIT 1").get() as Record<string, unknown>;
+  assertEquals([Number(rr.ok), Number(rr.unmatched), rr.note], [1, 0, "adjusted:1"]);
+
+  // Same amount again: nothing to adjust, nothing logged.
+  run = await h.reconcile();
+  assertEquals([run.ok, run.adjusted], [1, 0]);
+
+  // One cent over the cap: STOP.
+  h.mock.listCharges = () => Promise.resolve([{ ...real[0], amountCents: 2001 }]);
+  run = await h.reconcile();
+  assertEquals([run.ok, run.overCap], [0, 1]);
+  assert(h.ledger.isStopped());
+  assertEquals(h.ledger.getRequest(row.id)!.finalCents, 1890, "an over-cap charge never rewrites the ledger");
+  assert(h.notifier.messages.at(-1)!.includes("over_cap"));
 });
 
 Deno.test("cleanup", async () => {

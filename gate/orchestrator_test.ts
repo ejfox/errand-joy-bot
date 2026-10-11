@@ -701,3 +701,125 @@ Deno.test("silent rows keep caps, velocity and STOP; a changed re-quote is denie
   await h.orch.stop("test");
   await assertRejects(() => h.orch.submit(req()), StopActive);
 });
+
+// ── item fields, delivery links, needs-action ─────────────────────────────
+Deno.test("intake keeps the print/geo item fields (bounded) and refuses bad ones", async () => {
+  const h = silentHarness();
+  h.adapter.price = 1000;
+  const item = {
+    sku: "SKU-P", qty: 1, title: "Postcard", message: "hello from the robot\nsecond line",
+    files: { interior: "https://files.example/i.pdf", cover: "https://files.example/c.pdf" }, pageCount: 24,
+    sizing: "fillPrintArea", attributes: { color: "black" }, aoi: "POLYGON((0 0,1 0,1 1,0 0))",
+  };
+  const row = await h.orch.submit(req({ items: [item] }));
+  assertEquals(row.items[0], item);
+  const bad: [Record<string, unknown>, RegExp][] = [
+    [{ message: "x".repeat(501) }, /item\.message/],
+    [{ message: "" }, /item\.message/],
+    [{ files: { interior: "http://files.example/i.pdf" } }, /item\.files\.interior must be https/],
+    [{ files: { cover: "https://files.example/c.pdf", extra: "https://x.example" } }, /only interior, cover/],
+    [{ files: "https://files.example/i.pdf" }, /item\.files invalid/],
+    [{ pageCount: 0 }, /item\.pageCount/],
+    [{ pageCount: 1201 }, /item\.pageCount/],
+    [{ pageCount: 1.5 }, /item\.pageCount/],
+    [{ sizing: "fill print area" }, /item\.sizing/],
+    [{ attributes: { "bad key": "x" } }, /item\.attributes/],
+    [{ attributes: { color: 3 } }, /item\.attributes/],
+    [{ attributes: Object.fromEntries(Array.from({ length: 21 }, (_, k) => [`k${k}`, "v"])) }, /item\.attributes/],
+    [{ aoi: "P".repeat(10_001) }, /item\.aoi/],
+  ];
+  for (const [over, re] of bad) {
+    const e = await assertRejects(() => h.orch.submit(req({ items: [{ sku: "SKU-P", qty: 1, ...over }] })));
+    assert(re.test((e as Error).message), `${JSON.stringify(over).slice(0, 60)} → ${(e as Error).message}`);
+  }
+});
+
+Deno.test("a postcard message is shown in unsealed DMs, never in sealed ones", async () => {
+  const h = harness();
+  await h.orch.submit(req({ items: [{ sku: "SKU-1", qty: 1, title: "Postcard", message: "Happy birthday, Jane!" }] }));
+  assert(h.notifier.messages[0].includes(`printed message: "Happy birthday, Jane!"`), h.notifier.messages[0]);
+  const s = harness(NOON, undefined, { silentBelowCents: 0, sealed: true });
+  s.adapter.price = 9000; // ask tier, reach self → sealed
+  await s.orch.submit(req({ items: [{ sku: "SKU-1", qty: 1, title: "Postcard", message: "Happy birthday, Jane!" }] }));
+  assert(!s.notifier.messages[0].includes("Happy birthday"), s.notifier.messages[0]);
+});
+
+Deno.test("delivery links: persisted from place() and status(), sanitized; the reveal DMs at most 3", async () => {
+  const h = silentHarness();
+  h.adapter.price = 1000;
+  h.adapter.place = (_r, q) =>
+    Promise.resolve({
+      vendorOrderId: "ord-L",
+      chargedCents: q.totalCents,
+      raw: {
+        links: [
+          "https://certs.example/tree/1",
+          "https://api.vendor.example/download?apiKey=SECRETKEY1234&id=1", // key in the URL: dropped
+          "http://plain.example/insecure", // not https: dropped
+          "https://user:pw@certs.example/x", // userinfo: dropped
+          "https://certs.example/tree/1", // duplicate
+          "https://dl.example/file?TOKEN=abc", // case-insensitive token param: dropped
+        ],
+      },
+    });
+  const row = await h.orch.submit(req({ items: [ITEM], whyNote: "you keep squinting at Saturn from the roof" }));
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.links, ["https://certs.example/tree/1"]);
+  // A status poll adds more; the row keeps at most 5, the reveal shows at most 3.
+  h.adapter.status = () =>
+    Promise.resolve({
+      state: "delivered" as const,
+      raw: { links: ["https://dl.example/a", "https://dl.example/b", "https://dl.example/c", "https://dl.example/d", "nope"] },
+    });
+  await h.orch.tick();
+  const done = h.ledger.getRequest(row.id)!;
+  assertEquals(done.state, "closed");
+  assertEquals(done.links, [
+    "https://certs.example/tree/1",
+    "https://dl.example/a",
+    "https://dl.example/b",
+    "https://dl.example/c",
+    "https://dl.example/d",
+  ]);
+  const reveal = h.notifier.messages.at(-1)!;
+  assertEquals([...reveal.matchAll(/^delivery: <https:\/\/[^\s<>]+>$/gm)].length, 3, reveal);
+  assert(reveal.includes("delivery: <https://certs.example/tree/1>"), reveal);
+  assert(!/SECRETKEY|apiKey|token=|insecure|user:pw/i.test(reveal), reveal);
+  assert(!h.ledger.writes.some((w) => w.includes("SECRETKEY")), "a keyed link is never stored");
+});
+
+Deno.test("needs action: a vendor-side block → ONE owner DM (label + hint), retried only if the send fails", async () => {
+  const h = silentHarness();
+  h.adapter.price = 1000;
+  h.adapter.place = (_r, q) =>
+    Promise.resolve({
+      vendorOrderId: "ord-B",
+      chargedCents: q.totalCents,
+      raw: { blocked: "RequiresPaymentAuthorisation", authorisationUrl: "https://pay.vendor.example/auth?token=SECRET" },
+    });
+  h.adapter.status = () =>
+    Promise.resolve({ state: "open" as const, raw: { blocked: "RequiresPaymentAuthorisation", authorisationUrl: "https://x?token=SECRET" } });
+  const row = await h.orch.submit(req());
+  h.notifier.fail = true;
+  await h.orch.tick();
+  let cur = h.ledger.getRequest(row.id)!;
+  assertEquals([cur.state, cur.needsAction, cur.needsActionDmAt], ["placed", "RequiresPaymentAuthorisation", undefined]);
+  assertEquals(h.ledger.isStopped(), false, "a blocked order is not outcome_unknown and never trips STOP");
+  h.notifier.fail = false;
+  await h.orch.tick();
+  await h.orch.tick();
+  await h.orch.tick();
+  assertEquals(h.notifier.messages.length, 1, "exactly one DM per request");
+  const dm = h.notifier.messages[0];
+  assert(dm.startsWith("fakeshop order needs you: "), dm);
+  assert(!/SECRET|https?:/.test(dm), "the vendor's action URL never reaches the DM");
+  cur = h.ledger.getRequest(row.id)!;
+  assert(cur.needsActionDmAt);
+  // The block clears; a later block on the same request does not DM again.
+  h.adapter.status = () => Promise.resolve({ state: "open" as const, raw: {} });
+  await h.orch.tick();
+  assertEquals(h.ledger.getRequest(row.id)!.needsAction, undefined);
+  h.adapter.status = () => Promise.resolve({ state: "open" as const, raw: { blocked: "RequiresPaymentAuthorisation" } });
+  await h.orch.tick();
+  assertEquals(h.notifier.messages.length, 1);
+});

@@ -99,7 +99,24 @@ export interface Item {
   title?: string;
   url?: string;
   maxUnitCents?: number;
+  /** Text printed on the item: a postcard's back message (Stannp). ≤ ITEM_MESSAGE_MAX chars. */
+  message?: string;
+  /** Print files, https URLs (Lulu: interior PDF + cover PDF). */
+  files?: { interior?: string; cover?: string };
+  /** Interior page count (Lulu). */
+  pageCount?: number;
+  /** How the image fills the print area (Prodigi: fillPrintArea | fitPrintArea | stretchToPrintArea). */
+  sizing?: string;
+  /** Product attributes (Prodigi, e.g. {color: "black"}). ≤ ITEM_ATTRIBUTES_MAX keys. */
+  attributes?: Record<string, string>;
+  /** Area of interest as a WKT polygon (SkyFi). ≤ ITEM_AOI_MAX chars. */
+  aoi?: string;
 }
+
+export const ITEM_MESSAGE_MAX = 500;
+export const ITEM_AOI_MAX = 10_000;
+export const ITEM_PAGE_COUNT_MAX = 1200;
+export const ITEM_ATTRIBUTES_MAX = 20;
 
 export type ShipTo =
   | typeof OWNER_HOME
@@ -145,6 +162,12 @@ export interface Quote {
 export interface Order {
   vendorOrderId: string;
   chargedCents: number;
+  /**
+   * Vendor payload. The gate reads two optional fields from it (on place() and status()):
+   * `links: string[]` (https delivery links: certificates, downloads, tracking; sanitized before
+   * they are stored or DMed) and `blocked: string` (the order exists but waits on the owner at the
+   * vendor, e.g. Prodigi "RequiresPaymentAuthorisation"; the owner gets ONE DM).
+   */
   raw?: unknown;
 }
 
@@ -301,6 +324,14 @@ export interface RequestRow {
   /** Set at decide: the pre-order DM and relay summary never name the item. */
   sealed?: boolean;
   rating?: number; // owner's one-tap rating after delivery (learning signal)
+  /** The most the gate authorized for this order (min of the bound quote and maxTotalCents), set at placing. */
+  hardCapCents?: number;
+  /** Sanitized https delivery links from the adapter (certificate, download, tracking). */
+  links?: string[];
+  /** Vendor-side block the owner must clear (adapter code, e.g. "RequiresPaymentAuthorisation"). */
+  needsAction?: string;
+  /** When the one "needs you" DM for `needsAction` was delivered. */
+  needsActionDmAt?: string;
   createdAt: string;
   updatedAt: string;
 }

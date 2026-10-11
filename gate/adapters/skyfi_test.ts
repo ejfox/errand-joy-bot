@@ -90,8 +90,19 @@ Deno.test("parseSkyFiItems: one archive + at most one AOI; tasking and anything 
   });
   const bbox = parseSkyFiItems(req({ items: [{ sku: "archive:a1", qty: 1 }, { sku: "bbox:-73.93,41.28,-73.91,41.3", qty: 1 }] }));
   assertEquals(bbox.aoi, "POLYGON ((-73.93 41.28, -73.91 41.28, -73.91 41.3, -73.93 41.3, -73.93 41.28))");
-  const wkt = "aoi:POLYGON((-73.93 41.28,-73.91 41.28,-73.91 41.3,-73.93 41.28))";
-  assert(parseSkyFiItems(req({ items: [{ sku: "archive:a1", qty: 1 }, { sku: wkt, qty: 1 }] })).aoi!.startsWith("POLYGON (("));
+  const wkt = "POLYGON((-73.93 41.28,-73.91 41.28,-73.91 41.3,-73.93 41.28))";
+  assertEquals(
+    parseSkyFiItems(req({ items: [{ sku: "archive:a1", qty: 1, aoi: wkt }] })).aoi,
+    "POLYGON ((-73.93 41.28, -73.91 41.28, -73.91 41.3, -73.93 41.28))",
+  );
+  // A polygon far longer than a sku could hold (the reason `aoi` is its own field).
+  const ring = Array.from({ length: 300 }, (_, k) => {
+    const t = (2 * Math.PI * k) / 300;
+    return `${(-73.92 + 0.01 * Math.cos(t)).toFixed(6)} ${(41.29 + 0.01 * Math.sin(t)).toFixed(6)}`;
+  });
+  const big = `POLYGON((${[...ring, ring[0]].join(",")}))`;
+  assert(big.length > 128 && big.length < 10_000);
+  assert(parseSkyFiItems(req({ items: [{ sku: "archive:a1", qty: 1, aoi: big }] })).aoi!.startsWith("POLYGON (("));
   const code = (items: PurchaseRequest["items"]) => {
     try {
       parseSkyFiItems(req({ items }));
@@ -110,11 +121,12 @@ Deno.test("parseSkyFiItems: one archive + at most one AOI; tasking and anything 
   assertEquals(code([{ sku: "archive:../etc", qty: 1 }]), "skyfi_bad_archive_id");
   assertEquals(code([{ sku: "archive:a1", qty: 1 }, { sku: "point:41.29,-73.92,500", qty: 1 }]), "skyfi_bad_radius");
   assertEquals(code([{ sku: "archive:a1", qty: 1 }, { sku: "bbox:-73,41,-60,42", qty: 1 }]), "skyfi_bad_bbox");
-  assertEquals(
-    code([{ sku: "archive:a1", qty: 1 }, { sku: "aoi:POLYGON((0 0,1 0,1 1,0 1))", qty: 1 }]),
-    "skyfi_aoi_not_closed",
-  );
-  assertEquals(code([{ sku: "archive:a1", qty: 1 }, { sku: "aoi:MULTIPOLYGON(((0 0,1 0,1 1,0 0)))", qty: 1 }]), "skyfi_bad_aoi");
+  assertEquals(code([{ sku: "archive:a1", qty: 1, aoi: "POLYGON((0 0,1 0,1 1,0 1))" }]), "skyfi_aoi_not_closed");
+  assertEquals(code([{ sku: "archive:a1", qty: 1, aoi: "MULTIPOLYGON(((0 0,1 0,1 1,0 0)))" }]), "skyfi_bad_aoi");
+  assertEquals(code([{ sku: "archive:a1", qty: 1, aoi: wkt }, { sku: POINT, qty: 1 }]), "skyfi_one_aoi_only");
+  assertEquals(code([{ sku: "archive:a1", qty: 1 }, { sku: POINT, qty: 1, aoi: wkt }]), "skyfi_aoi_on_archive_item_only");
+  // the old aoi: sku encoding is gone
+  assertEquals(code([{ sku: "archive:a1", qty: 1 }, { sku: `aoi:${wkt}`, qty: 1 }]), "skyfi_bad_sku");
 });
 
 Deno.test("pointToWkt: a closed square of side 2r around the point; WKT is validated", () => {
