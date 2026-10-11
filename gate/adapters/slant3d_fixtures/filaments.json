@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "message": "test filaments (shape: GET /filaments, openapi Filament)",
+  "data": [
+    { "publicId": "test-filament-pla-black", "name": "test PLA Black", "provider": "example-provider", "profile": "PLA", "color": "black", "hexValue": "#000000", "available": true },
+    { "publicId": "test-filament-pla-matte-black", "name": "test PLA Matte Black", "provider": "example-provider", "profile": "PLA", "color": "matte black", "hexValue": "#111111", "available": true },
+    { "publicId": "test-filament-pla-white", "name": "test PLA White", "provider": "example-provider", "profile": "PLA", "color": "white", "hexValue": "#ffffff" },
+    { "publicId": "test-filament-petg-red", "name": "test PETG Red", "provider": "example-provider", "profile": "PETG", "color": "red", "hexValue": "#ff0000", "available": false },
+    { "publicId": "test-filament-petg-dark-blue", "name": "test PETG Dark Blue", "provider": "example-provider", "profile": "PETG", "color": "dark blue", "hexValue": "#000080", "available": true },
+    { "publicId": "test-filament-petg-light-blue", "name": "test PETG Light Blue", "provider": "example-provider", "profile": "PETG", "color": "light blue", "hexValue": "#add8e6", "available": true }
+  ],
+  "count": 6,
+  "lastUpdated": "2026-10-11T00:00:00.000Z"
+}

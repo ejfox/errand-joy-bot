@@ -5,6 +5,7 @@
 import { OWNER_HOME, type PurchaseRequest, type Reach, REACH_RANK, type VendorAdapter } from "../types.ts";
 import { MockAdapter } from "./mock.ts";
 import { zincFromEnv } from "./zinc.ts";
+import { slant3dFromEnv } from "./slant3d.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
 //   mouser / craftcloud / pcbway          self when shipTo is owner-home, otherwise others
@@ -111,6 +112,7 @@ export interface RegistryOptions extends GuardOptions {
 export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => VendorAdapter>> = {
   mock: (o) => new MockAdapter({ taxRate: o.mockTaxRate, worldCategories: [...(o.worldCategories ?? [])] }),
   zinc: () => zincFromEnv(),
+  slant3d: () => slant3dFromEnv(),
 };
 
 export function knownVendors(): string[] {
