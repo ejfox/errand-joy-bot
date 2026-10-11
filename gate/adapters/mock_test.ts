@@ -119,6 +119,7 @@ Deno.test("registry is a closed allowlist and hands out only guarded adapters", 
     "prodigi",
     "mouser",
     "lob",
+    "oshpark",
   ]);
   const reg = buildRegistry(["mock"], OPEN);
   assert.deepEqual(Object.keys(reg), ["mock"]);

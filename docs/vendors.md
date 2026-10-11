@@ -814,3 +814,66 @@ makes ONE (plus an idempotent retry of the same key) to the docs' sample address
 sample artwork, then status, cancel and listCharges:
 `LOB_LIVE=1 LOB_API_KEY=test_… deno test --allow-read --allow-env --allow-net=api.lob.com --filter LIVE gate/adapters/lob_test.ts`
 (it refuses to run with a `live_` key).
+
+## OSH Park (PCBs, made in the US): a handoff, the owner pays
+
+`oshpark` is a **handoff** adapter: the robot prices and uploads the board, and **a human does
+the checkout**. No money moves through the gate. OSH Park has no quote or order API; what it
+documents ([API uploading](https://docs.oshpark.com/tips+tricks/api/), read 2026-10-11) is an
+anonymous upload, `POST https://oshpark.com/import.json` with a multipart `file`, which answers
+`{"token", "url": "https://oshpark.com/uploads/<token>"}`. Per the docs, the upload can't return
+previews or warnings, nor add the project to an account. No key, no account, nothing to revoke.
+
+- **Items:** exactly one. `sku` = the service, `qty` = boards (rounded up to sets of 3, max 30),
+  `url` = the Gerber zip as a path under `$DATA_DIR/designs/` (anything else is refused). The
+  pipeline that makes the zip is in [tools/pcb/README.md](../tools/pcb/README.md).
+- **`quote()`** is computed locally, no network. The board size is the bounding box of the outline
+  layer (X2 `Profile`, else `Edge_Cuts` / `.gko` / `.gm1` / `.gml`), arcs included
+  (`gate/adapters/oshpark_gerber.ts`, CLI `tools/pcb/gerber_bbox.ts`). Price = rate × sq in ×
+  sets, rounded once to the cent, from [docs.oshpark.com/services](https://docs.oshpark.com/services/)
+  (verified 2026-10-11):
+
+  | `sku` | service | $/sq in per set of 3 | ships in |
+  |---|---|---|---|
+  | `2layer` | 2-layer prototype, 1.6mm 1oz | 5 | 9-12 calendar days |
+  | `2layer-swift` | 2-layer Super Swift | 10 | 4-5 business days |
+  | `2layer-2oz` | 2-layer 2oz, 0.8mm | 5 | 12-21 calendar days |
+  | `2layer-afterdark` | 2-layer After Dark | 5 | 12-21 calendar days |
+  | `4layer` | 4-layer prototype | 10 | 9-14 calendar days |
+  | `4layer-swift` | 4-layer Super Swift | 20 | 5-6 business days |
+  | `6layer` | 6-layer prototype | 15 | 12-21 calendar days |
+
+  Shipping is free worldwide; tax is quoted as 0 (OSH Park's checkout is authoritative and may
+  add sales tax). Flex (suspended) and Medium Run (100 sq in minimum) are not offered.
+  `vendorRef` binds the zip's sha256, so `place()` refuses a file that changed after the quote.
+- **`place()` spends nothing.** It uploads the zip and returns an `Order` with
+  `vendorOrderId` = the upload token, **`chargedCents = 0`**, and `raw = { handoff: true,
+  blocked: "handoff", links: ["https://oshpark.com/uploads/<token>"] }`. The gate stores the link
+  on the request and sends its one "order needs you" DM. The owner opens the link, reviews the
+  render, picks the address and pays on oshpark.com. A third-party `shipTo` is refused (reach is
+  `self`). Every failure is a `GuardRefused` (request `failed`, never `outcome_unknown`), since an
+  upload can't move money; a retry may leave an orphan upload, which costs nothing. The upload
+  still reaches OSH Park, so it needs `DRY_RUN=0` like any real vendor.
+- **`status()`** is `open` (still reporting the handoff block and link) until the owner marks it:
+  `touch $DATA_DIR/oshpark/<token>.delivered` when the boards arrive (the request then closes,
+  with the link in the why-note), or `.cancelled` if they never order.
+- **`cancel()`** returns `true` without a call: an upload nobody checks out is never made or billed.
+- **`listCharges()` is always `[]`**: the card charge happens at OSH Park, outside the gate, so
+  reconcile has nothing to match and nothing to flag. Because the order is recorded at $0, it
+  does **not** use the day / month / vendor windows. The tier (auto / ask) is still chosen on the
+  quoted price. To count the real spend, first `touch $DATA_DIR/oshpark/<token>-paid.delivered`,
+  then `POST /internal/import-order` with `{vendor: "oshpark", vendorOrderId: "<token>-paid",
+  cents, note}`. The marker comes first because the gate polls `status()` for imported rows too,
+  and an unmarked id reads as an open handoff (it would close the row only after a "needs you" DM).
+- `pause()` is a local flag.
+
+**Gap.** The "needs you" DM is static text per vendor (`VENDOR_ACTION_HINTS`) and, by design,
+carries no vendor URL; the uploads link is on the request (`GET /api/requests/:id`) and in the
+delivery why-note. A DM that includes the sanitized `row.links[0]` would make the handoff one
+tap. The live test:
+`OSHPARK_LIVE=1 deno test --allow-read --allow-write=/tmp --allow-env --allow-net=oshpark.com --filter LIVE gate/adapters/oshpark_test.ts`
+uploads a 20×20mm outline anonymously and orders nothing.
+
+**Future auto-pay path:** PCBWay's partner API (`PcbQuotation`, `PlaceOrder`, `ConfirmOrder`
+against a prepaid balance) would let the robot pay for boards under the normal caps, with the
+balance as a vendor-side cap. Access is by application (anson@pcbway.com).

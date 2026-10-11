@@ -13,6 +13,7 @@ import { slant3dFromEnv } from "./slant3d.ts";
 import { prodigiFromEnv } from "./prodigi.ts";
 import { mouserFromEnv } from "./mouser.ts";
 import { lobFromEnv } from "./lob.ts";
+import { oshParkFromEnv } from "./oshpark.ts";
 
 // Future adapters (not built; each needs its own key, spend limit and reachFor):
 //   craftcloud / pcbway                   self when shipTo is owner-home, otherwise others
@@ -126,6 +127,7 @@ export const VENDOR_FACTORIES: Readonly<Record<string, (o: RegistryOptions) => V
   prodigi: () => prodigiFromEnv(),
   mouser: () => mouserFromEnv(),
   lob: () => lobFromEnv(),
+  oshpark: () => oshParkFromEnv(),
 };
 
 export function knownVendors(): string[] {
@@ -152,6 +154,7 @@ export const VENDOR_HOSTS: Readonly<Record<string, readonly string[]>> = {
   prodigi: ["api.prodigi.com", "api.sandbox.prodigi.com"],
   mouser: ["api.mouser.com"],
   lob: ["api.lob.com"],
+  oshpark: ["oshpark.com"],
 };
 
 /** Deduped --allow-net hosts for the enabled vendors. Unknown vendors throw (closed allowlist). */
