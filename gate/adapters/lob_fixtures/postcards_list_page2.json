@@ -1,0 +1,19 @@
+{
+  "_source": "Second (last) page of a Lob GET /v1/postcards list: next_url null. All values are fake.",
+  "data": [
+    {
+      "id": "psc_fake0000000004",
+      "metadata": { "ejb_idempotency_key": "example-idem-4", "ejb_cents": "107", "task_id": "example-task-4" },
+      "size": "6x9",
+      "status": "rendered",
+      "tracking_events": [],
+      "date_created": "2026-10-11T17:00:00.000Z",
+      "date_modified": "2026-10-11T17:00:00.000Z",
+      "object": "postcard"
+    }
+  ],
+  "object": "list",
+  "previous_url": "https://api.lob.com/v1/postcards?limit=100&before=fakecursor2",
+  "next_url": null,
+  "count": 1
+}

@@ -1,0 +1,21 @@
+{
+  "_source": "Shape of a Lob GET /v1/postcards/{id} response whose last tracking event is Returned to Sender (docs.lob.com). All values are fake.",
+  "id": "psc_fake0000000003",
+  "metadata": {},
+  "url": "https://example.com/postcards/psc_fake0000000003.pdf",
+  "carrier": "USPS",
+  "front_template_id": null,
+  "back_template_id": null,
+  "size": "6x9",
+  "mail_type": "usps_first_class",
+  "expected_delivery_date": "2026-10-16",
+  "date_created": "2026-10-11T16:00:00.000Z",
+  "date_modified": "2026-10-15T09:00:00.000Z",
+  "use_type": "operational",
+  "status": "rendered",
+  "tracking_events": [
+    { "id": "evnt_fake000000003", "type": "normal", "name": "In Transit", "details": null, "location": "10001", "time": "2026-10-13T08:00:00.000Z", "date_created": "2026-10-13T09:00:00.000Z", "date_modified": "2026-10-13T09:00:00.000Z", "object": "tracking_event" },
+    { "id": "evnt_fake000000004", "type": "normal", "name": "Returned to Sender", "details": null, "location": "10001", "time": "2026-10-15T08:00:00.000Z", "date_created": "2026-10-15T09:00:00.000Z", "date_modified": "2026-10-15T09:00:00.000Z", "object": "tracking_event" }
+  ],
+  "object": "postcard"
+}

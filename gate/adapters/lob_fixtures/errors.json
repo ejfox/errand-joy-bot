@@ -1,0 +1,9 @@
+{
+  "_source": "Lob error bodies are {error:{message,status_code,code}} (docs.lob.com `error` schema and codes). Messages are paraphrased; all values are fake.",
+  "invalid_file_url": { "status": 422, "body": { "error": { "message": "example: file url is invalid", "status_code": 422, "code": "invalid_file_url" } } },
+  "payment_method_unverified": { "status": 401, "body": { "error": { "message": "example: verified payment method required", "status_code": 401, "code": "payment_method_unverified" } } },
+  "rate_limited": { "status": 429, "body": { "error": { "message": "Rate limit exceeded. Please wait 5 seconds and try your request again.", "code": "rate_limit_exceeded", "status_code": 429 } } },
+  "server_error": { "status": 500, "body": { "error": { "message": "example: internal error", "status_code": 500, "code": "internal_server_error" } } },
+  "not_deletable": { "status": 422, "body": { "error": { "message": "example: postcard cannot be deleted", "status_code": 422, "code": "not_deletable" } } },
+  "deleted": { "status": 200, "body": { "id": "psc_fake0000000001", "deleted": true } }
+}

@@ -1,0 +1,39 @@
+{
+  "_source": "Shape of a Lob GET /v1/postcards 200 list response (docs.lob.com `all_postcards`), trimmed to the fields the adapter reads. All values are fake.",
+  "data": [
+    {
+      "id": "psc_fake0000000001",
+      "metadata": { "ejb_idempotency_key": "example-idem-1", "ejb_cents": "94", "task_id": "example-task" },
+      "size": "4x6",
+      "status": "rendered",
+      "tracking_events": [],
+      "date_created": "2026-10-11T15:00:00.000Z",
+      "date_modified": "2026-10-11T15:00:00.000Z",
+      "object": "postcard"
+    },
+    {
+      "id": "psc_fake0000000002",
+      "metadata": {},
+      "size": "4x6",
+      "status": "rendered",
+      "deleted": true,
+      "date_created": "2026-10-11T15:30:00.000Z",
+      "date_modified": "2026-10-11T15:31:00.000Z",
+      "object": "postcard"
+    },
+    {
+      "id": "psc_fake0000000003",
+      "metadata": {},
+      "size": "6x9",
+      "status": "rendered",
+      "tracking_events": [],
+      "date_created": "2026-10-11T16:00:00.000Z",
+      "date_modified": "2026-10-11T16:00:00.000Z",
+      "object": "postcard"
+    }
+  ],
+  "object": "list",
+  "previous_url": null,
+  "next_url": "https://api.lob.com/v1/postcards?limit=100&after=fakecursor1",
+  "count": 3
+}
