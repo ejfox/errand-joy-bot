@@ -102,7 +102,9 @@ const PHONE_RE = /^\+?[\d\s\-.\/()]{8,20}$/;
 
 /**
  * Item fields:
- *   sku            = the pod_package_id, e.g. `0550X0850.FC.STD.SS.080CW444.GXX`
+ *   sku            = the pod_package_id. Verified live 2026-10-11: `0550X0850FCPRESS080CW444GXX`
+ *                    (5.5x8.5 full-color saddle-stitch zine), `0600X0900BWSTDPB060UW444MXX` (6x9 B&W
+ *                    paperback). Many plausible-looking ids return "Pod Package does not exist".
  *   pageCount      = interior pages (2-1200)
  *   files.interior = the interior PDF (https)
  *   files.cover    = the cover PDF (https)

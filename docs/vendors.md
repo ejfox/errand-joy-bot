@@ -432,8 +432,9 @@ Hosts: `api.sandbox.lulu.com`, `api.lulu.com` (both added by `ops/install.sh`).
 
 **What an agent sends.** Up to 10 items (one per title), `qty` = copies (1-100):
 
-- `sku` = the pod package id, e.g. `0550X0850.FC.STD.SS.080CW444.GXX` (dotted or legacy 27-char
-  ids; pick one with Lulu's price calculator).
+- `sku` = the pod package id. Known-good (quoted live): `0550X0850FCPRESS080CW444GXX` (5.5x8.5
+  full-color saddle-stitch zine; 32 pages ≈ $15.89 delivered to NY) and `0600X0900BWSTDPB060UW444MXX`
+  (6x9 B&W paperback). Many plausible-looking ids don't exist; check new ones with a quote first.
 - `pageCount` = interior pages (2-1200).
 - `files.interior` and `files.cover` = the interior and cover PDFs, public https URLs Lulu can
   download.

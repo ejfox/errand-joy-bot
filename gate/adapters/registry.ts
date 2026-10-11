@@ -145,7 +145,8 @@ export const VENDOR_HOSTS: Readonly<Record<string, readonly string[]>> = {
   lulu: ["api.lulu.com", "api.sandbox.lulu.com"],
   // File uploads go to a presigned S3 URL whose host Slant 3D picks (not documented, not yet
   // observed live). Pass it with `install.sh --allow-net <bucket host>` once seen.
-  slant3d: ["slant3dapi.com"],
+  // Design uploads go to a presigned S3 PUT on this bucket (observed 2026-10-11).
+  slant3d: ["slant3dapi.com", "slant-gatekeeper.s3.us-west-2.amazonaws.com"],
   prodigi: ["api.prodigi.com", "api.sandbox.prodigi.com"],
   mouser: ["api.mouser.com"],
 };
