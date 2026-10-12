@@ -200,6 +200,22 @@ Deno.test("upsertBudget overrides caps; openDb does not clobber them", async () 
   );
 });
 
+Deno.test("mock-vendor test purchases never count against a real vendor's windows", async () => {
+  const db = await tmpDb();
+  const at = "2026-10-11T14:00:00.000Z";
+  const now = new Date("2026-10-11T18:00:00Z");
+  mk(db, at, "placed", 8_040, { vendor: "mock" }); // the live mock "heat gun" test, 2026-10-11
+  mk(db, at, "placed", 200, { vendor: "zinc" });
+  mk(db, at, "placed", 500, { vendor: "mock", joy: true });
+  const zinc = windowUsage(db, now, "zinc", "joy");
+  assert.equal(zinc["global/day"].spentCents, 200);
+  assert.equal(zinc["global/month"].spentCents, 200);
+  assert.equal(zinc["joy/week"].spentCents, 0);
+  const mock = windowUsage(db, now, "mock", "joy"); // mock still sees everything, so caps stay testable
+  assert.equal(mock["global/day"].spentCents, 8_740);
+  assert.equal(mock["joy/week"].spentCents, 500);
+});
+
 Deno.test("excludeRequestId leaves the re-decided request out of every window", async () => {
   const db = await tmpDb();
   const at = "2026-10-11T14:00:00.000Z";

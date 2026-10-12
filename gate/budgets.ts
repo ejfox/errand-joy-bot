@@ -179,13 +179,16 @@ export function windowUsage(
   const week = windowBounds(now, "week", tz);
   const vKey = `${vendor}/month`;
   const ex = opts.excludeRequestId ?? null;
+  // The mock vendor moves no money, so its test purchases never eat a real vendor's
+  // budget. Mock requests still count against each other, so caps stay testable.
+  const real = vendor === "mock" ? "" : "AND vendor <> 'mock'";
   return {
     "global/day": {
-      spentCents: spent(db, day, ex),
+      spentCents: spent(db, day, ex, real),
       capCents: capFor(db, "global/day", defaultCap("global/day")),
     },
     "global/month": {
-      spentCents: spent(db, month, ex),
+      spentCents: spent(db, month, ex, real),
       capCents: capFor(db, "global/month", defaultCap("global/month")),
     },
     [vKey]: {
@@ -193,7 +196,7 @@ export function windowUsage(
       capCents: capFor(db, vKey, DEFAULT_VENDOR_MONTH_CAP_CENTS),
     },
     "joy/week": {
-      spentCents: spent(db, week, ex, "AND budget = 'joy'"),
+      spentCents: spent(db, week, ex, `AND budget = 'joy' ${real}`),
       capCents: capFor(db, "joy/week", defaultCap("joy/week")),
     },
   };
