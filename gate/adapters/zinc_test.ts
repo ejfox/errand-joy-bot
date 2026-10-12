@@ -97,9 +97,10 @@ Deno.test("quote: cheapest delivered New offer, tax buffer, $1 fee folded into t
   const q = await adapter(fetchImpl).quote(req({ items: [{ sku: "B00KFP6NHO", qty: 2 }] }));
   // New offers: 799 + 0 ship (wins: 1598) vs 749 + 399 ship (1897); used and unavailable are ignored.
   assertEquals(q.subtotalCents, 1_598);
-  assertEquals(q.shippingCents, 0);
+  // Under the $35 free-shipping threshold, so the small-order shipping floor applies.
+  assertEquals(q.shippingCents, 699);
   assertEquals(q.taxCents, 160); // round(1598 × 0.10)
-  assertEquals(q.totalCents, 1_598 + 160 + 0 + 100);
+  assertEquals(q.totalCents, 1_598 + 160 + 699 + 100);
   assertEquals(calls[0].url, "https://zinc.example/products/B00KFP6NHO/offers?retailer=amazon");
   assertEquals(calls[0].auth, "Bearer fake_zn_test_key");
 });
@@ -109,9 +110,22 @@ Deno.test("quote: maxUnitCents filters offers; none left → zinc_no_offer", asy
   const a = adapter(fetchImpl);
   const q = await a.quote(req({ items: [{ sku: "B00KFP6NHO", qty: 1, maxUnitCents: 750 }] }));
   assertEquals(q.subtotalCents, 749);
-  assertEquals(q.shippingCents, 399);
+  assertEquals(q.shippingCents, 699); // the offer says 399, the small-order floor says 699
   const e = await assertRejects(() => a.quote(req({ items: [{ sku: "B00KFP6NHO", qty: 1, maxUnitCents: 100 }] })), ZincError);
   assertEquals(e.code, "zinc_no_offer");
+});
+
+Deno.test("quote: small-order shipping floor applies under the threshold only, and 0 disables it", async () => {
+  const { fetchImpl } = stub([[isGet("/offers"), { status: 200, body: fx("offers_amazon.json") }]]);
+  // 5 × 799 = 3995 ≥ 3500: free shipping, offer shipping (0) is used.
+  const big = await adapter(fetchImpl).quote(req({ items: [{ sku: "B00KFP6NHO", qty: 5 }] }));
+  assertEquals(big.shippingCents, 0);
+  // Threshold 0 turns the floor off (e.g. once Zinc enables Prime on the account).
+  const off = await adapter(fetchImpl, { freeShippingThresholdCents: 0 }).quote(req({ items: [{ sku: "B00KFP6NHO", qty: 2 }] }));
+  assertEquals(off.shippingCents, 0);
+  // A custom floor.
+  const custom = await adapter(fetchImpl, { smallOrderShippingCents: 599 }).quote(req({ items: [{ sku: "B00KFP6NHO", qty: 2 }] }));
+  assertEquals(custom.shippingCents, 599);
 });
 
 Deno.test("quote: metered 402 {detail} maps to insufficient_funds", async () => {

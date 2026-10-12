@@ -24,6 +24,13 @@ export const ZINC_DEFAULT_RETAILER = "amazon";
 export const ZINC_ORDER_FEE_CENTS = 100;
 /** Offers carry no tax, so the quote adds this buffer on the subtotal (≈ the highest US combined rates). */
 export const ZINC_DEFAULT_TAX_RATE = 0.1;
+/**
+ * Offers often report no shipping, but Zinc-managed Amazon orders under the retailer's free-shipping
+ * threshold ($35, `GET /retailers` → free_shipping_threshold_cents) do pay shipping. Without this the
+ * quote is too low and Zinc fails the order with max_price_exceeded (first live joy pick, 2026-10-11).
+ */
+export const ZINC_FREE_SHIPPING_THRESHOLD_CENTS = 3500;
+export const ZINC_SMALL_ORDER_SHIPPING_CENTS = 699;
 /** Headroom over the quote that max_price allows for price drift: max 10%. */
 export const ZINC_MAX_PRICE_HEADROOM = 1.1;
 const IDEMPOTENCY_METADATA_KEY = "ejb_idempotency_key";
@@ -50,6 +57,9 @@ export interface ZincAdapterOptions {
   ownerShipTo?: string | ZincAddress;
   taxRate?: number;
   feeCents?: number;
+  /** Subtotal at or above this ships free; below it, smallOrderShippingCents is assumed. 0 disables. */
+  freeShippingThresholdCents?: number;
+  smallOrderShippingCents?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -201,6 +211,8 @@ export class ZincAdapter implements VendorAdapter {
   private readonly ownerShipTo?: string | ZincAddress;
   readonly taxRate: number;
   readonly feeCents: number;
+  readonly freeShippingThresholdCents: number;
+  readonly smallOrderShippingCents: number;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: ZincAdapterOptions = {}) {
@@ -221,6 +233,11 @@ export class ZincAdapter implements VendorAdapter {
     }
     this.feeCents = opts.feeCents ?? ZINC_ORDER_FEE_CENTS;
     if (!Number.isSafeInteger(this.feeCents) || this.feeCents < 0) throw new Error("zinc feeCents must be >= 0");
+    this.freeShippingThresholdCents = opts.freeShippingThresholdCents ?? ZINC_FREE_SHIPPING_THRESHOLD_CENTS;
+    this.smallOrderShippingCents = opts.smallOrderShippingCents ?? ZINC_SMALL_ORDER_SHIPPING_CENTS;
+    for (const [k, v] of [["freeShippingThresholdCents", this.freeShippingThresholdCents], ["smallOrderShippingCents", this.smallOrderShippingCents]] as const) {
+      if (!Number.isSafeInteger(v) || v < 0) throw new Error(`zinc ${k} must be an integer >= 0`);
+    }
     this.fetchImpl = opts.fetchImpl ?? ((input, init) => fetch(input, init));
   }
 
@@ -264,6 +281,10 @@ export class ZincAdapter implements VendorAdapter {
       const best = offers.reduce((a, b) => cost(a) <= cost(b) ? a : b); // cheapest delivered, not cheapest sticker
       subtotalCents += (best.price as number) * it.qty;
       shippingCents += shipOf(best);
+    }
+    // Small orders pay shipping even when offers say they don't (see ZINC_FREE_SHIPPING_THRESHOLD_CENTS).
+    if (subtotalCents < this.freeShippingThresholdCents) {
+      shippingCents = Math.max(shippingCents, this.smallOrderShippingCents);
     }
     const taxCents = Math.round(subtotalCents * this.taxRate);
     return {
@@ -465,11 +486,15 @@ export function mapZincStatus(o: Pick<ZincOrder, "status" | "tracking_numbers">)
 /** Build from env: ZINC_API_KEY, ZINC_BASE_URL, ZINC_RETAILER, ZINC_TAX_RATE, OWNER_SHIP_TO_JSON. */
 export function zincFromEnv(env: (k: string) => string | undefined = (k) => Deno.env.get(k)): ZincAdapter {
   const tax = env("ZINC_TAX_RATE");
+  const freeShip = env("ZINC_FREE_SHIPPING_THRESHOLD_CENTS");
+  const smallShip = env("ZINC_SMALL_ORDER_SHIPPING_CENTS");
   return new ZincAdapter({
     apiKey: env("ZINC_API_KEY"),
     baseUrl: env("ZINC_BASE_URL"),
     retailer: env("ZINC_RETAILER"),
     ownerShipTo: env("OWNER_SHIP_TO_JSON"),
     taxRate: tax ? Number(tax) : undefined,
+    freeShippingThresholdCents: freeShip ? Number(freeShip) : undefined,
+    smallOrderShippingCents: smallShip ? Number(smallShip) : undefined,
   });
 }
